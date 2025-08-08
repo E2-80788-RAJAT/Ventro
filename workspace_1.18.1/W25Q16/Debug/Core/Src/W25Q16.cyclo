@@ -1,0 +1,10 @@
+../Core/Src/W25Q16.c:19:6:SPI_Write	1
+../Core/Src/W25Q16.c:22:6:SPI_Read	1
+../Core/Src/W25Q16.c:25:6:W25Q_Reset	1
+../Core/Src/W25Q16.c:35:10:W25Q_ReadID	1
+../Core/Src/W25Q16.c:45:6:W25Q_Read	1
+../Core/Src/W25Q16.c:61:6:write_enable	1
+../Core/Src/W25Q16.c:68:6:write_disable	1
+../Core/Src/W25Q16.c:75:10:bytetoWrite	2
+../Core/Src/W25Q16.c:83:6:erase_sector	1
+../Core/Src/W25Q16.c:102:6:W25Q_Write_Page	4

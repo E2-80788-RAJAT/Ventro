@@ -1,0 +1,10 @@
+14:51:11 **** Incremental Build of configuration Debug for project W25Q16 ****
+make -j8 all 
+arm-none-eabi-size  W25Q16.elf 
+   text	   data	    bss	    dec	    hex	filename
+   9616	     12	   1716	  11344	   2c50	W25Q16.elf
+Finished building: default.size.stdout
+ 
+
+14:51:11 Build Finished. 0 errors, 0 warnings. (took 244ms)
+

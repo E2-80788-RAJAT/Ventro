@@ -1,0 +1,10 @@
+19:07:33 **** Incremental Build of configuration Debug for project ppr_valve ****
+make -j8 all 
+arm-none-eabi-size  ppr_valve.elf 
+   text	   data	    bss	    dec	    hex	filename
+   9968	     12	   1644	  11624	   2d68	ppr_valve.elf
+Finished building: default.size.stdout
+ 
+
+19:07:34 Build Finished. 0 errors, 0 warnings. (took 245ms)
+

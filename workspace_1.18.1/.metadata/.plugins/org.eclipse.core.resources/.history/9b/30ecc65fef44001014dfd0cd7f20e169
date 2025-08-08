@@ -1,0 +1,54 @@
+/*
+ * battery_mgr.c
+ *
+ *  Created on: Jun 8, 2025
+ *      Author: Admin
+ */
+
+
+#include "battery_mgr.h"
+#include "stm32f4xx_hal.h"
+
+#define VBAT_ADC_THRESHOLD   3.2f    // Voltage threshold in volts
+#define VBAT_ADC_CHANNEL     ADC_CHANNEL_4
+#define AC_DET_PIN           GPIO_PIN_0
+#define AC_DET_PORT          GPIOA
+
+extern ADC_HandleTypeDef hadc1;
+static PowerSource currentPower = POWER_UNKNOWN;
+
+void Battery_Init(void)
+{
+	HAL_ADC_Start(&hadc1);
+	Battery_UpdateStatus();
+}
+
+void Battery_UpdateStatus(void)
+{
+	float vbat = Battery_ReadVBAT();
+	GPIO_PinState acState = HAL_GPIO_ReadPin(AC_DET_PORT, AC_DET_PIN);
+
+	if (acState == GPIO_PIN_RESET || vbat < VBAT_ADC_THRESHOLD)
+		currentPower = POWER_BATTERY;
+	else
+		currentPower = POWER_MAINS;
+}
+
+float Battery_ReadVBAT(void)
+{
+	HAL_ADC_Start(&hadc1);
+	HAL_ADC_PollForConversion(&hadc1, 10);
+	uint32_t raw = HAL_ADC_GetValue(&hadc1);
+	float vbat = ((float)raw * 3.3f) / 4095.0f * 2.0f; // Assuming voltage divider
+	return vbat;
+}
+
+PowerSource Battery_GetStatus(void)
+{
+	return currentPower;
+}
+
+typedef struct {
+	int vbat_mv;
+	int ac_present;
+} PowerSource;

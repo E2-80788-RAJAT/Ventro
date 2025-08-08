@@ -1,0 +1,60 @@
+/*
+ * dwin_ui.c
+ *
+ *  Created on: Jun 8, 2025
+ *      Author: Admin
+ */
+
+
+#include "dwin_ui.h"
+#include "uart_comm.h"
+#include "mode_control.h"
+#include "vent_config.h"
+#include "sensor_if.h"
+#include "alarm.h"
+#include "battery_mgr.h"
+#include <stdio.h>
+
+static char uiBuffer[64];
+
+void UI_Init(void)
+{
+    UART_Init();
+}
+
+void UI_Update(void)
+{
+    // Get current sensor data
+    SensorData sensor = Sensor_GetLatest();
+
+    // Format and send sensor readings (Pressure, Flow, Mode)
+    snprintf(uiBuffer, sizeof(uiBuffer),
+             "P:%.1f F:%.1f M:%d\n",
+             sensor.aPressure,
+             sensor.flowRate,
+             ModeControl_GetMode());
+    UART_SendString(uiBuffer);
+
+    // Send alarm status
+    uint8_t alarms = Alarm_GetStatus();			//use AlarmStatus alarm as uint8_t alarm
+    snprintf(uiBuffer, sizeof(uiBuffer),
+             "ALARM:%02X\n", alarms.all);
+    UART_SendString(uiBuffer);
+
+    // Send battery and AC power status
+    BatteryStatus bat = Battery_GetStatus();
+    snprintf(uiBuffer, sizeof(uiBuffer),
+             "BAT:%d AC:%d\n", bat.vbat_mv, bat.ac_present);
+    UART_SendString(uiBuffer);
+
+    // Handle incoming mode switch commands
+    char cmd = UART_ReceiveChar();
+    switch (cmd)
+    {
+        case '0': ModeControl_SetMode(MODE_VCV);  break;
+        case '1': ModeControl_SetMode(MODE_PCV);  break;
+        case '2': ModeControl_SetMode(MODE_SIMV); break;
+        case '3': ModeControl_SetMode(MODE_PSV);  break;
+        default: break;
+    }
+}

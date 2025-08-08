@@ -1,0 +1,60 @@
+/*
+ * mode_control.c
+ *
+ *  Created on: Jun 9, 2025
+ *      Author: Admin
+ */
+
+#include "mode_control.h"
+#include "Atmega.h"
+
+#include "valve_pwm.h"
+#include "defaults.h"
+#include <math.h>
+
+extern uint8_t Compliance_Adult_Flag;
+extern uint8_t Compliance_Neonate_Flag;
+
+static PatientProfile currentPatientProfile = DEFAULT_PATIENT_PROFILE;
+static float volumeAccumulator = 0.0f;
+static float samplePeriod_ms = 10.0f;
+static int breathCycleTimer_ms = 0;
+static int breathInterval_ms = 4000; // ~15 bpm
+
+
+void DecidePatient(PatientProfile profile){
+	if(Compliance_Adult_Flag == 1){
+		profile = 0;
+	}
+	else if(Compliance_Neonate_Flag == 1){
+		profile = 1;
+	}
+
+}
+void ModeControl_SetPatientProfile(PatientProfile profile)
+{
+    currentPatientProfile = profile;
+}
+
+PatientProfile ModeControl_GetPatientProfile(void)
+{
+    return currentPatientProfile;
+}
+
+float Flow_From_DiffPressure(float deltaP_cmH2O, PatientProfile profile)
+{
+    float K = (profile == PROFILE_CHILD) ? 0.15f : 0.25f;
+    float flow = K * sqrtf(fabsf(deltaP_cmH2O));
+    return (deltaP_cmH2O >= 0) ? flow : -flow;
+}
+
+void Mode_VCV(float targetVolume)
+{
+    SensorData sensor = Sensor_GetLatest();
+    float flow = Flow_From_DiffPressure(p_flow, currentPatientProfile);
+    float tidalVolumeIncrement = flow * (samplePeriod_ms / 60000.0f); // L
+    volumeAccumulator += tidalVolumeIncrement;
+
+    float duty = ValvePWM_ControlVolume(vt_value, volumeAccumulator);
+    ValvePWM_SetDuty(duty);
+}

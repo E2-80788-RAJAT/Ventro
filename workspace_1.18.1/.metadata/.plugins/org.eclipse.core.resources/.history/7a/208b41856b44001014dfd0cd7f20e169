@@ -1,0 +1,80 @@
+#include "eeprom_log.h"
+#include "log_structs.h"
+#include "mode_control.h"
+#include "sensor_if.h"
+#include "alarm.h"
+#include "stm32f4xx_hal.h"
+#include <string.h>
+#include <stdint.h>
+
+extern I2C_HandleTypeDef hi2c2; // EEPROM on I2C2
+
+#define EEPROM_ADDRESS     0xA0
+#define LOG_START_ADDR     0x0000
+#define LOG_ENTRY_SIZE     sizeof(VentCycleLog)
+#define MAX_LOG_ENTRIES    512
+
+static uint16_t logIndex = 0;
+
+// CRC-8-ATM: polynomial 0x31, init 0xFF
+static uint8_t CalculateCRC(const uint8_t *data, uint16_t len)
+{
+    uint8_t crc = 0xFF;
+    for (uint16_t i = 0; i < len; ++i)
+    {
+        crc ^= data[i];
+        for (uint8_t j = 0; j < 8; ++j)
+        {
+            if (crc & 0x80)
+                crc = (crc << 1) ^ 0x31;
+            else
+                crc <<= 1;
+        }
+    }
+    return crc;
+}
+
+void EEPROM_LogInit(void)
+{
+    logIndex = 0;
+}
+
+HAL_StatusTypeDef EEPROM_LogCycle(void)
+{
+    VentCycleLog entry;
+    memset(&entry, 0, sizeof(VentCycleLog));
+
+    entry.timestamp     = HAL_GetTick();
+    entry.mode          = ModeControl_GetMode();
+
+    SensorData sensor   = Sensor_GetLatest();
+    entry.peak_pressure = sensor.aPressure;
+    entry.min_pressure  = sensor.dPressure;
+    entry.tidal_volume  = sensor.flowRate;
+    entry.breath_count  = 1;
+    entry.alarm_flags   = Alarm_GetStatus().all;
+
+    // Append CRC
+    entry.crc = CalculateCRC((uint8_t *)&entry, sizeof(VentCycleLog) - 1);
+
+    HAL_StatusTypeDef status = EEPROM_WriteStruct(logIndex, &entry);
+
+    // Wear-leveling: wrap around after max entries
+    logIndex = (logIndex + 1) % MAX_LOG_ENTRIES;
+
+    return status;
+}
+
+HAL_StatusTypeDef EEPROM_WriteStruct(uint16_t index, const VentCycleLog *entry)
+{
+    uint16_t addr = LOG_START_ADDR + index * LOG_ENTRY_SIZE;
+    const uint8_t *data = (const uint8_t *)entry;
+
+    return HAL_I2C_Mem_Write(&hi2c2,
+                             EEPROM_ADDRESS,
+                             addr,
+                             I2C_MEMADD_SIZE_16BIT,
+                             (uint8_t *)data,
+                             LOG_ENTRY_SIZE,
+                             100);
+}

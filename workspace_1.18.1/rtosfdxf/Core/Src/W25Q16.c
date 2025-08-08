@@ -1,0 +1,148 @@
+/*
+ * W25Q16.c
+ *
+ *  Created on: Apr 21, 2025
+ *      Author: PC-X2
+ */
+
+
+#include "main.h"
+#include "W25Qxx.h"
+#include "FreeRTOS.h"
+#include "FreeRTOSConfig.h"
+
+extern SPI_HandleTypeDef hspi1;
+#define W25Q_SPI hspi1
+#define csLOW() HAL_GPIO_WritePin (GPIOB, GPIO_PIN_0, GPIO_PIN_RESET)
+#define csHIGH() HAL_GPIO_WritePin (GPIOB, GPIO_PIN_0, GPIO_PIN_SET)
+
+#define numBLOCK 32
+void SPI_Write(uint8_t *data, uint8_t len){
+	HAL_SPI_Transmit(&W25Q_SPI, data, len, HAL_MAX_DELAY);
+}
+void SPI_Read(uint8_t *data, uint32_t len){
+	HAL_SPI_Receive(&W25Q_SPI, data, len, HAL_MAX_DELAY);
+}
+void W25Q_Reset(void){
+	uint8_t tDATA[2];
+	tDATA[0] = 0x66; //enable reset
+	tDATA[1] = 0x99; //reset
+	csLOW();
+//	HAL_SPI_Transmit(&W25Q_SPI, tDATA, 2, HAL_MAX_DELAY);
+	SPI_Write(tDATA, 2);
+	csHIGH();
+	HAL_Delay(5);
+}
+uint32_t W25Q_ReadID(void){
+	uint8_t tData = 0x9F;
+	uint8_t rData[3];
+
+	csLOW();
+	SPI_Write(&tData, 1);
+	SPI_Read(rData, 3);
+	csHIGH();
+	return ((rData[0] << 16) | (rData[1] << 8) | (rData[2]));
+}
+void W25Q_Read(uint32_t startPage, uint8_t offset, uint32_t size, uint8_t *rData){
+	uint8_t tData[5];
+	uint32_t memAddress = (startPage * 256) + offset;
+	if(numBLOCK < 1024){
+		tData[0] = 0x03;
+		tData[1] = (memAddress >> 16) & 0xFF;
+		tData[2] = (memAddress >> 8) & 0xFF;
+		tData[3] = (memAddress) & 0xFF;
+
+
+	}
+	csLOW();
+	SPI_Write(tData, 4);
+	SPI_Read(rData, size);
+	csHIGH();
+}
+void write_enable(void){
+	uint8_t tData = 0x06;
+	csLOW();
+	SPI_Write(&tData, 1);
+	csHIGH();
+	HAL_Delay(5);
+}
+void write_disable(void){
+	uint8_t tData = 0x04;
+	csLOW();
+	SPI_Write(&tData, 1);
+	csHIGH();
+	HAL_Delay(5);
+}
+uint32_t bytetoWrite(uint32_t size, uint16_t offset){
+	if((size + offset) <  256){
+		return size;
+	}
+	else{
+		return 256 - offset;
+	}
+}
+void erase_sector(uint8_t numSector){
+	uint8_t tData[6];
+	uint32_t memAddress = numSector * 16 * 256;
+
+	write_enable();
+	if(numBLOCK < 512) //chipsize less than 256
+	{
+		tData[0] = 0x20;
+		tData[1] = (memAddress >> 24) & 0xFF;
+		tData[2] = (memAddress >> 16) & 0xFF;
+		tData[3] = (memAddress >> 8) & 0xFF;
+		tData[4] = (memAddress) & 0xFF;
+		csLOW();
+		SPI_Write(tData, 4);
+		csHIGH();
+	}
+	HAL_Delay(450);
+	write_disable();
+}
+void W25Q_Write_Page(uint32_t page, uint16_t offset, uint32_t size, uint8_t *data){
+	uint8_t tData[266];
+	uint32_t startPage = page;
+	uint32_t endPage = startPage + ((size + offset - 1) / 256);
+	uint32_t numPage = endPage - startPage + 1;
+
+	uint16_t startSector = startPage / 16;
+	uint16_t endSector = endPage / 16;
+	uint16_t numSecotr = endSector - startSector + 1;
+	for(uint8_t i = 0; i < numSecotr; i++){
+		erase_sector(startSector++);
+	}
+	uint32_t dataPosition = 0;
+	//write data
+	for(uint8_t i = 0; i < numPage; i++){
+		uint32_t memAddress = (startPage*256) + offset;
+		uint16_t bytesRemaining = bytetoWrite(size, offset);
+		uint32_t index = 0;
+
+		write_enable();
+		if(numBLOCK < 512) //chip size < 256mb
+		{
+			tData[0] = 0x02; 	//page program instruction
+			tData[1] = (memAddress >> 16) & 0xFF;
+			tData[2] = (memAddress >> 8) & 0xFF;
+			tData[3] = (memAddress) & 0xFF;
+
+			index = 4;
+		}
+
+		uint32_t bytestoSend = bytesRemaining + index;
+		for(uint8_t i = 0; i < bytesRemaining; i++){
+			tData[index++] = data[i+dataPosition];
+		}
+		csLOW();
+		SPI_Write(tData, bytestoSend);
+		csHIGH();
+		startPage++;
+		offset = 0;
+		size = size - bytesRemaining;
+		dataPosition = dataPosition + bytesRemaining;
+
+		HAL_Delay(5);
+		write_disable();
+	}
+}

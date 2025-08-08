@@ -1,0 +1,13 @@
+/*
+ * battery_mgr.c
+ *
+ *  Created on: Jun 8, 2025
+ *      Author: Admin
+ */
+
+#ifndef INC_BATTERY_MGR_C_
+#define INC_BATTERY_MGR_C_
+
+
+
+#endif /* INC_BATTERY_MGR_C_ */

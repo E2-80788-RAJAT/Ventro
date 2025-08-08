@@ -1,0 +1,13 @@
+/*
+ * eeprom_log.h
+ *
+ *  Created on: Jun 8, 2025
+ *      Author: Admin
+ */
+
+#ifndef INC_EEPROM_LOG_H_
+#define INC_EEPROM_LOG_H_
+
+
+
+#endif /* INC_EEPROM_LOG_H_ */

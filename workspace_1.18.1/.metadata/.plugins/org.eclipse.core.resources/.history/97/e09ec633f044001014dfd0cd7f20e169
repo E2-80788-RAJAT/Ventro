@@ -1,0 +1,32 @@
+/*
+ * app_init.c
+ *
+ *  Created on: Jun 8, 2025
+ *      Author: Admin
+ */
+
+
+#include "app_init.h"
+
+#include "alarm.h"
+#include "sensor_if.h"
+#include "valve_pwm.h"
+#include "dwin_ui.h"
+#include "mode_control.h"
+#include "battery_mgr.h"
+#include "eeprom_log.h"
+#include "rtc.h"
+
+void App_Init(void)
+{
+    HAL_Init();
+
+    Sensor_Init();
+    ValvePWM_Init();
+    UI_Init();
+    ModeControl_Init();
+    Battery_Init();
+    Alarm_Init();
+    EEPROM_LogInit();
+    RTC_Init();
+}

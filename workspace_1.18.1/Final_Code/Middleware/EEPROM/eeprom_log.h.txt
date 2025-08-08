@@ -1,0 +1,22 @@
+#ifndef __EEPROM_LOG_H
+#define __EEPROM_LOG_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "log_structs.h"
+#include "mode_control.h"
+#include "sensor_if.h"
+#include "alarm.h"
+#include "stm32f4xx_hal.h"
+
+void EEPROM_LogInit(void);
+HAL_StatusTypeDef EEPROM_LogCycle(void);
+HAL_StatusTypeDef EEPROM_WriteStruct(uint16_t index, const VentCycleLog *entry);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* __EEPROM_LOG_H */

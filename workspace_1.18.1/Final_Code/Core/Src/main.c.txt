@@ -1,0 +1,79 @@
+// main.c - Ventilator System Main Application
+
+#include "main.h"
+#include "sensor_if.h"
+#include "mode_control.h"
+#include "valve_pwm.h"
+#include "eeprom_log.h"
+#include "dwin_ui.h"
+#include "alarm.h"
+#include "battery_mgr.h"
+#include "defaults.h"
+
+#include "stm32f4xx_hal.h"
+#include <stdbool.h>
+
+// RTOS disabled - cooperative round-robin style
+
+void System_Init(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+
+    Sensor_Init();
+    ValvePWM_Init();
+    EEPROM_LogInit();
+    Alarm_Init();
+    UI_Init();
+    Battery_Init();
+
+    ModeControl_SetPatientProfile(DEFAULT_PATIENT_PROFILE);
+    ModeControl_SetMode(MODE_VCV); // Default mode
+}
+
+void Scheduler_10ms(void)
+{
+    static uint32_t tick10ms = 0;
+
+    Sensor_ReadAll();
+    Alarm_Update();
+    Battery_Update();
+    UI_Update();
+
+    VentMode mode = ModeControl_GetMode();
+
+    switch (mode)
+    {
+        case MODE_VCV:
+            Mode_VCV(DEFAULT_VCV_TIDAL_VOL);
+            break;
+        case MODE_PCV:
+            Mode_PCV(DEFAULT_PCV_PRESSURE);
+            break;
+        case MODE_SIMV:
+            Mode_SIMV(DEFAULT_VCV_TIDAL_VOL);
+            break;
+        case MODE_PSV:
+            Mode_PSV(DEFAULT_PCV_PRESSURE);
+            break;
+        default:
+            break;
+    }
+
+    tick10ms++;
+    if (tick10ms % 100 == 0)  // Every 1 sec
+    {
+        EEPROM_LogCycle();
+    }
+}
+
+int main(void)
+{
+    System_Init();
+
+    while (1)
+    {
+        HAL_Delay(10); // Cooperative 10ms tick
+        Scheduler_10ms();
+    }
+}

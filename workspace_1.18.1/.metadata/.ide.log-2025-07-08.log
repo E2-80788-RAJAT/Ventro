@@ -1,0 +1,31 @@
+2025-07-09 10:26:33,096 [INFO] WebApp:194 - Connection lost
+2025-07-09 10:26:37,320 [INFO] WebApp:191 - Connection restablished
+2025-07-09 10:26:39,489 [INFO] WebApp:194 - Connection lost
+2025-07-09 10:26:39,711 [INFO] WebApp:191 - Connection restablished
+2025-07-09 10:28:26,223 [INFO] EditThreadDialog:704 - RAM SIZE (in KB): 128
+2025-07-09 10:28:26,223 [INFO] EditThreadDialog:706 - RAM SIZE (in words): 32768
+2025-07-09 10:28:27,572 [INFO] TasksAndQueuesTab:757 - Dynamic
+2025-07-09 10:28:27,573 [WARN] TasksAndQueuesTab:763 - 128 128
+2025-07-09 10:28:27,573 [WARN] TasksAndQueuesTab:775 - max value is: 3840.0
+2025-07-09 10:28:27,573 [INFO] TasksAndQueuesTab:757 - Dynamic
+2025-07-09 10:28:27,573 [WARN] TasksAndQueuesTab:763 - 128 128
+2025-07-09 10:28:27,573 [WARN] TasksAndQueuesTab:775 - max value is: 3840.0
+2025-07-09 10:28:27,573 [INFO] TasksAndQueuesTab:757 - Dynamic
+2025-07-09 10:28:27,573 [WARN] TasksAndQueuesTab:763 - 128 128
+2025-07-09 10:28:27,573 [WARN] TasksAndQueuesTab:775 - max value is: 3840.0
+2025-07-09 10:28:28,385 [INFO] EditThreadDialog:704 - RAM SIZE (in KB): 128
+2025-07-09 10:28:28,385 [INFO] EditThreadDialog:706 - RAM SIZE (in words): 32768
+2025-07-09 10:28:29,444 [INFO] TasksAndQueuesTab:757 - Dynamic
+2025-07-09 10:28:29,445 [WARN] TasksAndQueuesTab:763 - 128 128
+2025-07-09 10:28:29,445 [WARN] TasksAndQueuesTab:775 - max value is: 3840.0
+2025-07-09 10:28:29,445 [INFO] TasksAndQueuesTab:757 - Dynamic
+2025-07-09 10:28:29,445 [WARN] TasksAndQueuesTab:763 - 128 128
+2025-07-09 10:28:29,445 [WARN] TasksAndQueuesTab:775 - max value is: 3840.0
+2025-07-09 10:28:29,445 [INFO] TasksAndQueuesTab:757 - Dynamic
+2025-07-09 10:28:29,445 [WARN] TasksAndQueuesTab:763 - 128 128
+2025-07-09 10:28:29,445 [WARN] TasksAndQueuesTab:775 - max value is: 3840.0
+2025-07-09 10:28:29,445 [INFO] TasksAndQueuesTab:757 - Dynamic
+2025-07-09 10:28:29,445 [WARN] TasksAndQueuesTab:763 - 128 128
+2025-07-09 10:28:29,445 [WARN] TasksAndQueuesTab:775 - max value is: 3840.0
+2025-07-09 10:28:31,038 [INFO] UtilMem:75 - End SaveConfig() Used Memory: 822668584 Bytes (1073741824)
+2025-07-09 10:28:32,882 [INFO] UtilMem:75 - End SaveConfig() Used Memory: 855174440 Bytes (1073741824)

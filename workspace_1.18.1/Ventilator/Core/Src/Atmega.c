@@ -1,0 +1,97 @@
+/*
+ * Atmega.c
+ *
+ *  Created on: Jun 9, 2025
+ *      Author: Admin
+ */
+
+#include<stdio.h>
+
+#include "Atmega.h"
+
+#define DigoutP_Max 29491
+#define DigoutP_Min 3277
+#define P_Max       0.075
+#define P_Min       0.0
+
+#define Sensp ((DigoutP_Max - DigoutP_Min)/3.0)
+#define Sensitivity ((DigoutP_Max - DigoutP_Min)/0.15)
+#define SAMPLE_TIME 	0.01f
+#define MAX_PRESSURE_CM_H2O 	40.0f
+
+#define COMPLIANCE_ADULT 	0.025f
+#define COMPLIANCE_CHILD 	0.01f
+#define COMPLIANCE_NEONATE 	0.005f
+
+UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart2_rx;
+
+uint8_t sensor_data[24];
+uint8_t final_sensor_data[12];
+
+uint16_t pressure_adc = 0;
+uint8_t update_flag = 0;
+uint8_t storevalue = 0;
+uint8_t storevalue1 = 0;
+uint16_t flow_adc = 0;
+float pressure_data = 0.0;
+float flow_data = 0.0;
+float mbar = 0.0;
+float p_flow = 0.0;
+int pressure = 0;
+float flow_Lps = 0.0;
+float p_flow_prev = 0.0;
+float volume_mL = 0.0;
+
+void ATmega_Receive(void){
+	HAL_UART_Receive_DMA(&huart2, sensor_data, sizeof(sensor_data));
+	uint8_t sensor_data_counter = 0;
+	for(int a = 0; a < 24; a++){
+		if(sensor_data[a] == 0x11){
+			for(int b = a; b < (a+ 12); b++){
+				final_sensor_data[sensor_data_counter] = sensor_data[b];
+				sensor_data_counter++;
+			}
+		}
+	}
+	//Absolute sensor data PS1,
+	pressure_adc = (((final_sensor_data[3] << 8)) | final_sensor_data[4]);
+	//data conversion
+	pressure_data = ((pressure_adc - DigoutP_Min) / Sensp) - 1.496;
+	mbar = pressure_data * 70.307;
+	pressure = mbar;
+	//Differential sensor data PS2
+	flow_adc = ((final_sensor_data[5] << 8) | final_sensor_data[6]);
+	// data converison
+	flow_data = ((pressure_adc - DigoutP_Min)/Sensp) - 1.463;
+	p_flow = flow_data * 70.307;
+}
+//void PressureToFlow(flow){
+//
+//	float dp = flow - p_flow_prev;
+//	flow_Lps = COMPLIANCE_NEONATE * (dp / SAMPLE_TIME);
+//	p_flow_prev = flow;
+//	volume_mL += flow_Lps * 1000.0f * SAMPLE_TIME;
+//
+//}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

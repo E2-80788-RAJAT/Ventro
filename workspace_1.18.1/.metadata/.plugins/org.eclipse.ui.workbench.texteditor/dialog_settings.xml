@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="Workbench">
+	<item key="hasShownOverlayPopupBefore" value="true"/>
+	<item key="replaceBarOpen" value="false"/>
+	<list key="searchhistory">
+		<item value="ICON_TOGGLE"/>
+		<item value="vcv_mode"/>
+		<item value="backup"/>
+		<item value="back"/>
+		<item value="W25Q_Write_Page"/>
+		<item value="PID_FLOW_SET_VALUE"/>
+		<item value="user_flowe"/>
+		<item value="main"/>
+		<item value="ValvePWM_RampUp"/>
+		<item value="tidalVolumeIncrement"/>
+		<item value="PID_FLOW_VAR - "/>
+		<item value="user_flowe_cal"/>
+		<item value="user_flow"/>
+		<item value="vcv_FLAg == 1"/>
+		<item value="VCV_FLAG = 1"/>
+	</list>
+</section>

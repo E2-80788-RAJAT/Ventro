@@ -1,0 +1,16 @@
+#include "log_structs.h"
+#include <stdio.h>
+
+// Format a log entry to a readable string (for debug output)
+void Log_FormatToString(const VentCycleLog *entry, char *buffer, size_t bufSize)
+{
+    snprintf(buffer, bufSize,
+             "T:%lu M:%u Pmax:%.1f Pmin:%.1f Vt:%.1f Cnt:%u A:%02X",
+             entry->timestamp,
+             entry->mode,
+             entry->peak_pressure,
+             entry->min_pressure,
+             entry->tidal_volume,
+             entry->breath_count,
+             entry->alarm_flags);
+}

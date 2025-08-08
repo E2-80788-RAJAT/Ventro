@@ -1,0 +1,13 @@
+/*
+ * uart_comm.h
+ *
+ *  Created on: Jun 8, 2025
+ *      Author: Admin
+ */
+
+#ifndef INC_UART_COMM_H_
+#define INC_UART_COMM_H_
+
+
+
+#endif /* INC_UART_COMM_H_ */

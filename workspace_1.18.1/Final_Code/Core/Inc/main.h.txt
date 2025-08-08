@@ -1,0 +1,24 @@
+// main.h - Header for main application logic
+
+#ifndef __MAIN_H
+#define __MAIN_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "stm32f4xx_hal.h"
+#include "vent_config.h"
+
+// System init and scheduler
+void System_Init(void);
+void Scheduler_10ms(void);
+
+// System clock configuration (STM32CubeMX generated usually)
+void SystemClock_Config(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* __MAIN_H */
