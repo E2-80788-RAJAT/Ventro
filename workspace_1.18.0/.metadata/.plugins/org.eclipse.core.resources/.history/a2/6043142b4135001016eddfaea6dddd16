@@ -1,0 +1,5367 @@
+/* USER CODE BEGIN Header */
+/**
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2025 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "cmsis_os.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include <stdbool.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <math.h>
+#include "pid_h.h"
+#include "stm32f4xx_hal.h"
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+#define DigoutP_Max 29491
+#define DigoutP_Min 3277
+#define P_Max       0.075
+#define P_Min       0.0
+
+#define Sensp ((DigoutP_Max - DigoutP_Min)/3.0)
+#define Sensitivity ((DigoutP_Max - DigoutP_Min)/0.15)
+#define SMOOTHING_WINDOW 5
+#define MCP3551_START_CONVERSION_CMD 0x24
+#define MAX_VALUE     16     //777215
+#define LEAK_THRESHOLD 10   // Minimum leak volume (mL) required
+#define LEAK_PERCENT_THRESHOLD 15 // Minimum leak percentage require
+#define MAX_ALARMS 10
+#define NUM_READINGS 100
+#define NUM_READINGS1 100
+
+//backup values
+#define numBLOCK 32
+#define W25Q_SPI hspi1
+#define csLOW() HAL_GPIO_WritePin (GPIOB, GPIO_PIN_0, GPIO_PIN_RESET)
+#define csHIGH() HAL_GPIO_WritePin (GPIOB, GPIO_PIN_0, GPIO_PIN_SET)
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+PID_TypeDef TPID;
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc2;
+ADC_HandleTypeDef hadc3;
+
+RTC_HandleTypeDef hrtc;
+
+SPI_HandleTypeDef hspi1;
+SPI_HandleTypeDef hspi3;
+
+TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim4;
+
+UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart2_rx;
+
+osThreadId dwinHandle;
+osThreadId sensorHandle;
+osThreadId mode_controlHandle;
+osThreadId Buzzer_TaskHandle;
+osThreadId Alarm_TaskHandle;
+osThreadId NotificationHandle;
+osThreadId BT_ADCHandle;
+osThreadId Loop_GraphHandle;
+osThreadId FVGraphHandle;
+osThreadId BackupHandle;
+osTimerId Button_clearHandle;
+osTimerId Touch_value_resetHandle;
+osSemaphoreId BuzzHandle;
+osSemaphoreId EEPROMHandle;
+/* USER CODE BEGIN PV */
+uint16_t ab = 0x00;
+uint16_t bc = 0x00;
+uint16_t cd = 0x00;
+uint16_t de = 0x00;
+float y_coor = 9.13;
+float x_coor = 0.32;
+float v_y;
+float p_x;
+float p_x1;
+float FV;
+float vt_x;
+float fl_y;
+uint16_t vt_xc = 0x00;
+uint16_t fl_yc = 0x00;
+uint32_t n1n2 = 0x00;
+uint32_t m1m2 = 0x00;
+//flow_sensor_sfm3300D
+uint8_t flow_byts_read[3];
+uint16_t flow_byts = 0;
+int offset = 32768;
+int scal_fact = 120;
+int data = 0;
+int raw_flow_val;
+//RTC
+uint32_t voldemort;
+uint32_t BKP0;
+uint32_t BKP1;
+uint32_t BKP2;
+uint32_t BKP3;
+uint32_t BKP4;
+uint32_t BKP5;
+uint32_t BKP6;
+uint32_t BKP7;
+uint32_t BKP8;
+uint32_t BKP9;
+uint32_t BKP10;
+uint32_t BKP11;
+uint32_t BKP12;
+uint32_t BKP13;
+uint32_t BKP14;
+uint32_t BKP15;
+uint32_t BKP16;
+uint32_t BKP17;
+uint32_t BKP18;
+uint32_t BKP19;
+uint32_t BKP20;
+uint8_t seconds;
+uint8_t sensor_data[24];
+uint8_t final_sensor_data[12];
+uint16_t pressure_adc = 0;
+uint8_t update_flag = 0;
+uint8_t storevalue = 0;
+uint8_t storevalue1 = 0;
+uint16_t flow_adc = 0;
+float pressure_data = 0.0;
+float flow_data = 0.0;
+float mbar = 0.0;
+//float flow = 0.0;
+int pressure = 0;
+
+//smooth pressure2
+float mbar_history[SMOOTHING_WINDOW] = {0};  // Store last values
+int index1 = 0;
+float mbar2_smooth = 0;  // Smoothed value
+uint32_t adcValue = 0;
+float ppr_flow_data;
+volatile int p_flow;
+float Ti = 0.0;
+float Te = 0.0;
+float BPS = 0.0;
+int total_time = 0;
+float xyz = 0.0;
+int xy = 0;
+// P_V graph
+float V1  = 0;
+int Volume = 0;
+
+bool VT_UPDATE_FLAG = 0;
+bool PID_VALUE_SET_FLAG = 0;
+bool PID_CALIBRATE_FLAG = 0;
+bool PID_FLAG = 0;
+bool PSW = 0;
+float sensor_flow_for_vt = 0.0;
+float hI_stor_data = 0.0;
+float z = 0.0;
+float PID_FLOW_VAR = 0.0;
+float user_flowe = 0.0;
+double Temp, PIDOut, TempSetpoint;
+
+//ACS PARAMETERS
+uint16_t Battery_Adc_Value;
+uint16_t ACS_Adc_Value;
+uint16_t ACS_Adc_Value1;
+uint16_t readValue;
+float sensitivity = 0.185;
+float rawVoltage;
+float current;
+float average = 0.0;
+float total = 0.0;
+uint16_t readings[NUM_READINGS];
+int readIndex = 0;
+float Battery_average = 0.0;
+float total1 = 0.0;
+uint16_t readings1[NUM_READINGS1];
+int readIndex1 = 0;
+
+//oxygen parameter
+float hI = 100;
+uint8_t P_HI = 0;
+uint8_t insp_cycle_counter = 0;
+float Percent = 0.0;
+float Oxygen = 0.0;
+volatile int exp_cycle_counter = 0;
+//float sensor_flow_for_vt = 0;
+int numatic_insp_ctr = 0;
+int numatic_exp_ctr = 0;
+//DISPLAY
+uint8_t DISPLAY_INPUT[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+uint8_t DISPLAY_INPUT1[13] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+uint8_t temp_add;
+uint8_t clear_add, clears_add, clearss_add, PS_add;
+uint8_t Keypad[5];
+uint16_t combinedNumber = 0;
+//right side display values of icons
+int insP_value = 1;
+int exp_value = 2;
+uint16_t vt_value = 0x190;
+uint8_t PLR_value = 0x14;
+uint8_t RR_value = 0x0C ;
+uint8_t IE_value = 0x00;
+uint8_t PU_value = 0x00;
+int TRG_value = 0x00;
+//uint8_t PIP_value = 0x00;
+int8_t PIP_value = 0xFFEC;
+uint8_t PEEP_value = 0x00;
+uint8_t PS_value = 0x00;
+uint8_t Play_value = 0x00;
+uint8_t Mute_value = 0x00;
+//set value storing variables of the display
+uint8_t store2 = 0;
+uint8_t C=0;
+
+int temp_insP_value = 1;
+int temp_exp_value = 2;
+uint16_t vt_temp_value = 0x190;
+int PLR_temp_value = 0x14;
+uint8_t RR_temp_value = 0x0C;
+uint8_t IE_temp_value = 0x00;
+uint8_t PU_temp_value = 0x00;
+int TRG_temp_value = 0x00;
+//uint8_t PIP_temp_value = 0x00;
+int8_t PIP_temp_value = 0xFFEC;
+uint8_t PEEP_temp_value = 0x00;
+uint8_t Peep_live_value = 0;
+uint8_t PS_temp_value = 0x00;
+uint8_t Play_temp_value = 0x00;
+uint8_t Mute_temp_value = 0x00;
+uint8_t P_TRG = 0;
+//................................ flag..............................
+bool SIMV_FLAG = 0;
+bool STAND_BY = 0;
+bool PSV_FLAG = 0;
+bool VCV_FLAG = 0;
+bool PCV_FLAG = 0;
+bool BAG_FLAG = 0;
+uint8_t mode_select_number = 0;
+uint8_t CLT_FLAG = 0;
+bool Mandatory_FLAG = 0;
+bool Spontaneous_FLAG = false;
+//SIMV parameters
+int start_time_ms = 0, end_time_ms = 0, elapsed_time_ms = 0;
+
+bool Value_reset_flag = 0;
+bool stand_ppr_set_flag = 0;
+bool vcv_ppr_set_flag = 0;
+bool pcv_ppr_set_flag = 0;
+bool simv_ppr_set_flag = 0;
+bool psv_ppr_set_flag = 0;
+bool bag_ppr_set_flag = 0;
+bool clt_ppr_set_flag = 0;
+bool value_set_flag = 0;
+bool DUTY_SET_FLAG = 0;
+//flags for all values set or input
+bool i_flag = 0;
+bool e_flag = 0;
+bool vt_flag = 0;
+bool plt_flag = 0;
+bool rr_flag = 0;
+bool pu_flag = 0;
+bool trg_flag = 0;
+bool pip_flag = 0;
+bool peep_flag = 0;
+bool PPR_FLAG = 0;
+bool PS_flag = 0;
+bool Play_flag = 0;
+bool Mute_flag = 0;
+bool mandatory_breath_flag = 0;
+bool O2_flag = 0;
+
+//flag for value reset
+
+bool i_value_reset_flag = 0;
+bool e_value_reset_flag = 0;
+bool vt_value_reset_flag = 0;
+bool plt_value_reset_flag = 0;
+bool rr_value_reset_flag = 0;
+bool pu_value_reset_flag = 0;
+bool trg_value_reset_flag = 0;
+bool pip_value_reset_flag = 0;
+bool peep_value_reset_flag = 0;
+bool PPR_value_reset_FLAG = 0;
+bool PS_value_reset_flag = 0;
+float Leak_Percentage = 0.0;
+float MV_value_var = 0.0;
+
+// alarms value set variables
+
+uint8_t P_peak_alarm_min_value = 0;
+uint8_t MV_alarm_min_value     = 0;
+uint8_t RR_alarm_min_value     = 0x04;
+uint8_t peep_alarm_min_value   = 0x04;
+uint8_t O2_alarm_min_value     = 0x14;
+
+uint8_t P_peak_alarm_max_value = 0x32;
+uint8_t MV_alarm_max_value     = 0x14;
+uint8_t RR_alarm_max_value     = 0x1E;
+uint8_t peep_alarm_max_value   = 0x0A;
+uint8_t O2_alarm_max_value     = 0x50;
+uint8_t next_mandatory_breath_time;
+uint8_t buzz_flag = 0;
+uint8_t Head = 0;
+uint8_t m_icon_add = 0x00;
+//Alarm ICON
+uint8_t alarm_icons[MAX_ALARMS];
+uint8_t alarm_count = 0;
+
+GPIO_PinState Bkp_status_previous;
+GPIO_PinState Bkp_status_current;
+bool Bkp_flag = 0;
+//Battery
+uint16_t BT_ADC;
+
+//flags
+bool P_peak_alarm_min_flag = 0;
+bool MV_alarm_min_flag     = 0;
+bool RR_alarm_min_flag     = 0;
+bool peep_alarm_min_flag   = 0;
+bool O2_alarm_min_flag     = 0;
+bool P_peak_alarm_max_flag = 0;
+bool MV_alarm_max_flag     = 0;
+bool RR_alarm_max_flag     = 0;
+bool peep_alarm_max_flag   = 0;
+bool O2_alarm_max_flag     = 0;
+bool Peep_control_flag = 0;
+//....................graph variables..................
+uint8_t button_color_status = 0x00;
+//uint8_t data_val2[22] = { 0x5A, 0xA5, 0x13, 0x82, 0x03, 0x10, 0x5A, 0xA5, 0x02,
+//		0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x05, 0x02, 0x00, 0x00, 0x00,
+//		0x00 };
+uint8_t data_val2[22] = { 0x5A, 0xA5, 0x13, 0x82, 0x03, 0x10, 0x5A, 0xA5, 0x03,
+		0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x05, 0x02, 0x00, 0x00, 0x00,
+		0x00 };
+uint8_t display_payload[22] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00 };
+
+//uint8_t line[28] = {0x5A, 0xA5, 0x17, 0x82, 0x10, 0xE4, 0x00, 0x02, 0x00, 0x02, 0xF8, 0X00,
+//		0x00, 0x02, 0x00, 0xA2, 0x01, 0x06,0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+//
+//uint8_t line2[28] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+//		0x00, 0x00, 0x00, 0x00};
+uint8_t line[22] = {0x5A, 0xA5, 0x13, 0x82, 0x10, 0xE4, 0x00, 0x02, 0x00, 0x01, 0xF8, 0X00,
+		0x02, 0xA2, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+
+uint8_t line2[22] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+uint8_t line3[22] = {0x5A, 0xA5, 0x13, 0x82, 0x10, 0xE4, 0x00, 0x02, 0x00, 0x01, 0x02, 0XB8,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+
+uint8_t line4[22] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+uint8_t line_graph[26] = {0x5A, 0xA5, 0x17, 0x82, 0x10, 0xE4, 0x00, 0x02, 0x00, 0x02, 0xF8,
+		0x00, 0x02, 0xA2, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+
+uint8_t line_graph2[46] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+uint8_t line_graph3[26] = {0x5A, 0xA5, 0x17, 0x82, 0x10, 0xE4, 0x00, 0x02, 0x00, 0x02, 0x04,
+		0x08, 0x02, 0xA2, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+
+//uint8_t line_gr8[46] = {0x5A, 0xA5, 0x2B, 0x82, 0x10, 0xE4, 0x00, 0x02, 0x00, 0x07, 0xF8, 0x00, 0x00, 0xFC, 0x01, 0x68, 0x01, 0x5E, 0x01, 0x68, 0x00, 0xFD,
+//		0x01, 0x69, 0x01, 0x5F, 0x01, 0x69, 0x01, 0xFE, 0x01, 0x6A, 0x01, 0x60, 0x01, 0x6A, 0x00, 0xFF,
+//		0x01, 0x6B, 0x01, 0x61, 0x01, 0x6B, 0xFF, 0x00};
+uint8_t line_gr8[46] = {0x5A, 0xA5, 0x2B, 0x82, 0x10, 0xE4, 0x00, 0x02, 0x00, 0x07, 0x02, 0xB8, 0x02, 0xA2, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+
+uint8_t line_gr81[46] = {0x5A, 0xA5, 0x2B, 0x82, 0x10, 0xE4, 0x00, 0x02, 0x00, 0x07, 0x02, 0xB8, 0x02, 0xA2, 0x01, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+
+uint8_t fv_graph[30] = {0x5A, 0xA5, 0x1B, 0x82, 0x13, 0x00, 0x00, 0x02, 0x00, 0x03, 0x04, 0x00,
+		0x02, 0xA4, 0x01, 0xA6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,0x00, 0x00, 0x00,
+		0x00, 0xFF, 0x00};
+
+uint8_t fvg[42] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+uint8_t flowvt[42] = {0x5A, 0xA5, 0x27, 0x82, 0x13, 0x00, 0x00, 0x02, 0x00, 0x06, 0x04, 0x00,
+		0x02, 0xA4, 0x01, 0xA6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x00};
+
+
+char pressure_string[2];
+char strtohex[3];
+char hex_string[2];
+char PV_string[2];
+uint8_t hex_val;
+//int ppr_flow_data;
+char hexStr[3]; // Two characters + null terminator
+char PV[3];
+uint8_t result;
+uint8_t result2;
+uint8_t result3;
+uint16_t result4;
+uint8_t PV_Graph;
+char v_xString[5];
+char v_x1[3];
+char v_x3[3];
+uint16_t v_x_hex;
+uint8_t a1 = 0x00;
+uint8_t a2 = 0x00;
+char v_yString[5];
+char v_y1[3];
+char v_y3[3];
+uint16_t v_y_hex;
+uint8_t y12 = 0x00;
+uint8_t y2 = 0x00;
+char v_x2String[5];
+char v_x2[3];
+char v_x4[3];
+uint16_t v_x2_hex;
+uint8_t a3 = 0x00;
+uint8_t a4 = 0x00;
+char v_y2String[5];
+char v_y2[3];
+char v_y4[3];
+uint16_t v_y2_hex;
+uint8_t y3 = 0x00;
+uint8_t y4 = 0x00;
+uint8_t loop_flag = 0;
+uint8_t m1 = 0x00;
+uint8_t m2 = 0x00;
+uint8_t n1 = 0x00;
+uint8_t n2 = 0x00;
+uint8_t o1 = 0;
+uint8_t o2 = 0;
+
+// FV GRAPH
+char vt_xString[5];
+char vt_x1[3];
+char vt_x3[3];
+uint8_t v1 = 0x00;
+uint8_t v2 = 0x00;
+char vt_x2String[5];
+char vt_x2[3];
+char vt_x4[3];
+uint8_t v3 = 0x00;
+uint8_t v4 = 0x00;
+char f_yString[5];
+char f_y1[3];
+char f_y3[3];
+uint8_t f1 = 0x00;
+uint8_t f2 = 0x00;
+char f_y2String[5];
+char f_y2[3];
+char f_y4[3];
+uint8_t f3 = 0x00;
+uint8_t f4 = 0x00;
+uint8_t i1;
+uint8_t i2;
+uint8_t k1;
+uint8_t k2;
+
+GPIO_PinState dfghf;
+
+//play icon
+uint8_t Play[9] = {0x5A, 0XA5, 0X06, 0X82, 0X55, 0X00, 0X01, 0X00, 0X1A};
+
+//all icon address
+//uint8_t GREEN_ICON[26] = {
+//
+//		0x01, 0x03, 0x05, 0x07,
+//		0x09, 0x0B, 0x0D, 0x0F,
+//		0x11, 0x13, 0x15, 0x17,
+//		0x19, 0x1A, 0x1D, 0x1F,
+//		0x21, 0x23, 0x25, 0x27,
+//		0X29, 0X2B, 0X2D, 0X2F,
+//		0X31, 0X3C
+//};
+
+uint8_t GREEN_ICON[22] = {
+
+		0x01, 0x03, 0x05, 0x07,
+		0x09, 0x0B, 0x0D, 0x0F,
+		0x13, 0x15, 0x17, 0x19,
+		0x1B, 0x1D, 0x1F, 0x21,
+		0x23, 0x25, 0x27, 0X29,
+		0X2B, 0X11
+};
+int test2 = 0;
+int test = 0;
+//uint8_t BLUE_ICON[49] = {
+//
+//		0x00, 0x02, 0x04, 0x06,
+//		0x08, 0x0A, 0x0C, 0x0E,
+//		0x10, 0x12, 0x14, 0x16,
+//		0x18, 0x1B, 0x1C, 0x1E,
+//		0x20, 0x22, 0x24, 0x26,
+//		0x28, 0x2A, 0X2C, 0X2E,
+//		0X30, 0X3B, 0x4E, 0x4F,
+//		0x50, 0x51, 0x52, 0x53,
+//		0x54, 0x55, 0x56, 0x57,
+//		0x58, 0x59, 0x5A, 0x5B,
+//		0x5C, 0x5D, 0x5E, 0x5F,
+//		0x60, 0x61, 0x62, 0x63,
+//		0x64
+//};
+uint8_t BLUE_ICON[22] = {
+
+		0x00, 0x02, 0x04, 0x06,
+		0x08, 0x0A, 0x0C, 0x0E,
+		0x12, 0x14, 0x16, 0X18,
+		0x1A, 0x1C, 0x1E, 0x20,
+		0x22, 0x24, 0x26, 0x28,
+		0x2A, 0x10
+};
+int pos = 0;
+//incoming pressure sensor data variable
+int compare_time = 0;
+int PPR_DUTY_SET_VALUE = 75;
+uint8_t previous_pressure_first = 0;
+uint16_t previous_pressure_second = 0;
+int P_data_compare = 0;
+
+uint8_t received_length = 0;
+bool Backup_flag = 0;
+bool Backup_flag1 = 0;
+bool AC_Detection_Flag = 0;
+bool Battery_ADC_Flag = 0;
+bool Display_Switch_Flag = 0;
+int insPause_vale = 3;
+int x = 100;
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
+static void MX_TIM1_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_USART1_UART_Init(void);
+static void MX_ADC1_Init(void);
+static void MX_SPI3_Init(void);
+static void MX_RTC_Init(void);
+static void MX_TIM4_Init(void);
+static void MX_ADC2_Init(void);
+static void MX_SPI1_Init(void);
+static void MX_ADC3_Init(void);
+void dwin_data(void const * argument);
+void sensor_one(void const * argument);
+void mode_ctr(void const * argument);
+void Buzzer(void const * argument);
+void Alarm(void const * argument);
+void Icon(void const * argument);
+void Battery(void const * argument);
+void Loop(void const * argument);
+void FVG(void const * argument);
+void backup(void const * argument);
+void Clear_Button(void const * argument);
+void value_reset(void const * argument);
+
+/* USER CODE BEGIN PFP */
+void PID_FLOW_SET_VALUE(double SETTING_POINT, double kp, double kd, double ki, uint32_t PID_time);
+uint8_t* ICON_TOGGLE(uint8_t ADD_H, uint8_t ADD_L, uint8_t pos, uint8_t status);
+uint8_t* display_data(uint8_t ADDH, uint8_t ADDL, uint8_t BUTTON_STATUS);
+void display_icon_clr(uint8_t ADD_H, uint8_t icon_add, uint8_t pos);
+void cls_con(int data);
+void inc_drc_icon(uint8_t BUTTON_STATUS);
+void cls_cmd(uint8_t pos);
+void intiger_val_send(uint8_t icon_address, uint8_t value);
+void PIP_VAL(uint8_t icon_address, uint8_t value);
+void intiger_val_vt_send(uint8_t icon_address, uint16_t value);
+double user_flowe_cal(void);
+void Breath_calclution(void);
+void float_value_send(float data, uint8_t add);
+void float_value_16bit_send(float data, uint8_t add);
+void VT_KEYPAD(void);
+void mv_alarm(void);
+void vt_alarm(uint16_t value);
+void rr_alarm(uint8_t value);
+void P_Peak_pressure(uint8_t value);
+void Peep_live_pressure(uint8_t value);
+void Compliance(uint8_t value);
+int inspPause(void);
+void touch_func(void);
+void battery_icon_change(uint8_t battery_icon_add);
+float Cuff_Leak_Test(void);
+//25-03-25 by amunra
+void SPI_Init(void);
+int P_sensor_data(void);
+void Mandarine(void);
+void Spontaneous_MODE(void);
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+uint32_t getElapsedMilliseconds(void){
+	return voldemort;
+}
+uint8_t RxData[50];
+uint16_t RxData1[5];
+
+/* USER CODE END 0 */
+
+/**
+ * @brief  The application entry point.
+ * @retval int
+ */
+int main(void)
+{
+
+	/* USER CODE BEGIN 1 */
+
+	/* USER CODE END 1 */
+
+	/* MCU Configuration--------------------------------------------------------*/
+
+	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+	HAL_Init();
+
+	/* USER CODE BEGIN Init */
+
+	/* USER CODE END Init */
+
+	/* Configure the system clock */
+	SystemClock_Config();
+
+	/* USER CODE BEGIN SysInit */
+	HAL_Delay(1000);
+	//	 NVIC_SystemReset();
+	/* USER CODE END SysInit */
+
+	/* Initialize all configured peripherals */
+	MX_GPIO_Init();
+	MX_DMA_Init();
+	MX_TIM1_Init();
+	MX_USART2_UART_Init();
+	MX_USART1_UART_Init();
+	MX_ADC1_Init();
+	MX_SPI3_Init();
+	MX_RTC_Init();
+	MX_TIM4_Init();
+	MX_ADC2_Init();
+	MX_SPI1_Init();
+	MX_ADC3_Init();
+	/* USER CODE BEGIN 2 */
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	SPI_Init();
+	HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+	//	HAL_ADC_Start(&hadc3);
+	/* USER CODE END 2 */
+
+	/* USER CODE BEGIN RTOS_MUTEX */
+	/* add mutexes, ... */
+	/* USER CODE END RTOS_MUTEX */
+
+	/* Create the semaphores(s) */
+	/* definition and creation of Buzz */
+	osSemaphoreDef(Buzz);
+	BuzzHandle = osSemaphoreCreate(osSemaphore(Buzz), 1);
+
+	/* definition and creation of EEPROM */
+	osSemaphoreDef(EEPROM);
+	EEPROMHandle = osSemaphoreCreate(osSemaphore(EEPROM), 1);
+
+	/* USER CODE BEGIN RTOS_SEMAPHORES */
+	/* add semaphores, ... */
+	/* USER CODE END RTOS_SEMAPHORES */
+
+	/* Create the timer(s) */
+	/* definition and creation of Button_clear */
+	osTimerDef(Button_clear, Clear_Button);
+	Button_clearHandle = osTimerCreate(osTimer(Button_clear), osTimerPeriodic, NULL);
+
+	/* definition and creation of Touch_value_reset */
+	osTimerDef(Touch_value_reset, value_reset);
+	Touch_value_resetHandle = osTimerCreate(osTimer(Touch_value_reset), osTimerPeriodic, NULL);
+
+	/* USER CODE BEGIN RTOS_TIMERS */
+	/* start timers, add new ones, ... */
+	/* USER CODE END RTOS_TIMERS */
+
+	/* USER CODE BEGIN RTOS_QUEUES */
+	/* add queues, ... */
+	/* USER CODE END RTOS_QUEUES */
+
+	/* Create the thread(s) */
+	/* definition and creation of dwin */
+	osThreadDef(dwin, dwin_data, osPriorityRealtime, 0, 1024);
+	dwinHandle = osThreadCreate(osThread(dwin), NULL);
+
+	/* definition and creation of sensor */
+	osThreadDef(sensor, sensor_one, osPriorityNormal, 0, 128);
+	sensorHandle = osThreadCreate(osThread(sensor), NULL);
+
+	/* definition and creation of mode_control */
+	osThreadDef(mode_control, mode_ctr, osPriorityRealtime, 0, 256);
+	mode_controlHandle = osThreadCreate(osThread(mode_control), NULL);
+
+	/* definition and creation of Buzzer_Task */
+	osThreadDef(Buzzer_Task, Buzzer, osPriorityAboveNormal, 0, 256);
+	Buzzer_TaskHandle = osThreadCreate(osThread(Buzzer_Task), NULL);
+
+	/* definition and creation of Alarm_Task */
+	osThreadDef(Alarm_Task, Alarm, osPriorityAboveNormal, 0, 128);
+	Alarm_TaskHandle = osThreadCreate(osThread(Alarm_Task), NULL);
+
+	/* definition and creation of Notification */
+	osThreadDef(Notification, Icon, osPriorityNormal, 0, 128);
+	NotificationHandle = osThreadCreate(osThread(Notification), NULL);
+
+	/* definition and creation of BT_ADC */
+	osThreadDef(BT_ADC, Battery, osPriorityNormal, 0, 128);
+	BT_ADCHandle = osThreadCreate(osThread(BT_ADC), NULL);
+
+	/* definition and creation of Loop_Graph */
+	osThreadDef(Loop_Graph, Loop, osPriorityBelowNormal, 0, 128);
+	Loop_GraphHandle = osThreadCreate(osThread(Loop_Graph), NULL);
+
+	/* definition and creation of FVGraph */
+	osThreadDef(FVGraph, FVG, osPriorityNormal, 0, 128);
+	FVGraphHandle = osThreadCreate(osThread(FVGraph), NULL);
+
+	/* definition and creation of Backup */
+	osThreadDef(Backup, backup, osPriorityBelowNormal, 0, 256);
+	BackupHandle = osThreadCreate(osThread(Backup), NULL);
+
+	/* USER CODE BEGIN RTOS_THREADS */
+	/* add threads, ... */
+	HAL_UART_Receive_DMA(&huart2, sensor_data, sizeof(sensor_data));
+	HAL_UART_Receive_DMA(&huart1, DISPLAY_INPUT, sizeof(DISPLAY_INPUT));
+
+	/* USER CODE END RTOS_THREADS */
+
+	/* Start scheduler */
+	osKernelStart();
+
+	/* We should never get here as control is now taken by the scheduler */
+
+	/* Infinite loop */
+	/* USER CODE BEGIN WHILE */
+
+
+	while (1)
+	{
+		/* USER CODE END WHILE */
+
+		/* USER CODE BEGIN 3 */
+
+
+	}
+	/* USER CODE END 3 */
+}
+
+/**
+ * @brief System Clock Configuration
+ * @retval None
+ */
+void SystemClock_Config(void)
+{
+	RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+	RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+	/** Configure the main internal regulator output voltage
+	 */
+	__HAL_RCC_PWR_CLK_ENABLE();
+	__HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+	/** Initializes the RCC Oscillators according to the specified parameters
+	 * in the RCC_OscInitTypeDef structure.
+	 */
+	RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
+	RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+	RCC_OscInitStruct.LSIState = RCC_LSI_ON;
+	RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+	RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+	RCC_OscInitStruct.PLL.PLLM = 4;
+	RCC_OscInitStruct.PLL.PLLN = 168;
+	RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+	RCC_OscInitStruct.PLL.PLLQ = 4;
+	if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	/** Initializes the CPU, AHB and APB buses clocks
+	 */
+	RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+			|RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+	RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+	RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+	RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+	RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+	if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+	{
+		Error_Handler();
+	}
+}
+
+/**
+ * @brief ADC1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_ADC1_Init(void)
+{
+
+	/* USER CODE BEGIN ADC1_Init 0 */
+
+	/* USER CODE END ADC1_Init 0 */
+
+	ADC_ChannelConfTypeDef sConfig = {0};
+
+	/* USER CODE BEGIN ADC1_Init 1 */
+
+	/* USER CODE END ADC1_Init 1 */
+
+	/** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+	 */
+	hadc1.Instance = ADC1;
+	hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+	hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+	hadc1.Init.ScanConvMode = DISABLE;
+	hadc1.Init.ContinuousConvMode = ENABLE;
+	hadc1.Init.DiscontinuousConvMode = DISABLE;
+	hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+	hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+	hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+	hadc1.Init.NbrOfConversion = 1;
+	hadc1.Init.DMAContinuousRequests = DISABLE;
+	hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+	if (HAL_ADC_Init(&hadc1) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	/** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+	 */
+	sConfig.Channel = ADC_CHANNEL_9;
+	sConfig.Rank = 1;
+	sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+	if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN ADC1_Init 2 */
+
+	/* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+ * @brief ADC2 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_ADC2_Init(void)
+{
+
+	/* USER CODE BEGIN ADC2_Init 0 */
+
+	/* USER CODE END ADC2_Init 0 */
+
+	ADC_ChannelConfTypeDef sConfig = {0};
+
+	/* USER CODE BEGIN ADC2_Init 1 */
+
+	/* USER CODE END ADC2_Init 1 */
+
+	/** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+	 */
+	hadc2.Instance = ADC2;
+	hadc2.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+	hadc2.Init.Resolution = ADC_RESOLUTION_12B;
+	hadc2.Init.ScanConvMode = DISABLE;
+	hadc2.Init.ContinuousConvMode = ENABLE;
+	hadc2.Init.DiscontinuousConvMode = DISABLE;
+	hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+	hadc2.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+	hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+	hadc2.Init.NbrOfConversion = 1;
+	hadc2.Init.DMAContinuousRequests = DISABLE;
+	hadc2.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+	if (HAL_ADC_Init(&hadc2) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	/** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+	 */
+	sConfig.Channel = ADC_CHANNEL_0;
+	sConfig.Rank = 1;
+	sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+	if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN ADC2_Init 2 */
+
+	/* USER CODE END ADC2_Init 2 */
+
+}
+
+/**
+ * @brief ADC3 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_ADC3_Init(void)
+{
+
+	/* USER CODE BEGIN ADC3_Init 0 */
+
+	/* USER CODE END ADC3_Init 0 */
+
+	ADC_ChannelConfTypeDef sConfig = {0};
+
+	/* USER CODE BEGIN ADC3_Init 1 */
+
+	/* USER CODE END ADC3_Init 1 */
+
+	/** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+	 */
+	hadc3.Instance = ADC3;
+	hadc3.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+	hadc3.Init.Resolution = ADC_RESOLUTION_12B;
+	hadc3.Init.ScanConvMode = DISABLE;
+	hadc3.Init.ContinuousConvMode = ENABLE;
+	hadc3.Init.DiscontinuousConvMode = DISABLE;
+	hadc3.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+	hadc3.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+	hadc3.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+	hadc3.Init.NbrOfConversion = 1;
+	hadc3.Init.DMAContinuousRequests = DISABLE;
+	hadc3.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+	if (HAL_ADC_Init(&hadc3) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	/** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+	 */
+	sConfig.Channel = ADC_CHANNEL_1;
+	sConfig.Rank = 1;
+	sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+	if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN ADC3_Init 2 */
+
+	/* USER CODE END ADC3_Init 2 */
+
+}
+
+/**
+ * @brief RTC Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_RTC_Init(void)
+{
+
+	/* USER CODE BEGIN RTC_Init 0 */
+
+	/* USER CODE END RTC_Init 0 */
+
+	RTC_TimeTypeDef sTime = {0};
+	RTC_DateTypeDef sDate = {0};
+	RTC_AlarmTypeDef sAlarm = {0};
+
+	/* USER CODE BEGIN RTC_Init 1 */
+
+	/* USER CODE END RTC_Init 1 */
+
+	/** Initialize RTC Only
+	 */
+	hrtc.Instance = RTC;
+	hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+	hrtc.Init.AsynchPrediv = 127;
+	hrtc.Init.SynchPrediv = 255;
+	hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+	hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+	hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+	if (HAL_RTC_Init(&hrtc) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	/* USER CODE BEGIN Check_RTC_BKUP */
+
+	/* USER CODE END Check_RTC_BKUP */
+
+	/** Initialize RTC and set the Time and Date
+	 */
+	sTime.Hours = 0;
+	sTime.Minutes = 0;
+	sTime.Seconds = 0;
+	sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+	sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+	if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sDate.WeekDay = RTC_WEEKDAY_TUESDAY;
+	sDate.Month = RTC_MONTH_APRIL;
+	sDate.Date = 1;
+	sDate.Year = 25;
+
+	if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN) != HAL_OK)
+	{
+		Error_Handler();
+	}
+
+	/** Enable the Alarm A
+	 */
+	sAlarm.AlarmTime.Hours = 0;
+	sAlarm.AlarmTime.Minutes = 0;
+	sAlarm.AlarmTime.Seconds = 0;
+	sAlarm.AlarmTime.SubSeconds = 0;
+	sAlarm.AlarmTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+	sAlarm.AlarmTime.StoreOperation = RTC_STOREOPERATION_RESET;
+	sAlarm.AlarmMask = RTC_ALARMMASK_NONE;
+	sAlarm.AlarmSubSecondMask = RTC_ALARMSUBSECONDMASK_ALL;
+	sAlarm.AlarmDateWeekDaySel = RTC_ALARMDATEWEEKDAYSEL_DATE;
+	sAlarm.AlarmDateWeekDay = 1;
+	sAlarm.Alarm = RTC_ALARM_A;
+	if (HAL_RTC_SetAlarm_IT(&hrtc, &sAlarm, RTC_FORMAT_BIN) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN RTC_Init 2 */
+
+	/* USER CODE END RTC_Init 2 */
+
+}
+
+/**
+ * @brief SPI1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_SPI1_Init(void)
+{
+
+	/* USER CODE BEGIN SPI1_Init 0 */
+
+	/* USER CODE END SPI1_Init 0 */
+
+	/* USER CODE BEGIN SPI1_Init 1 */
+
+	/* USER CODE END SPI1_Init 1 */
+	/* SPI1 parameter configuration*/
+	hspi1.Instance = SPI1;
+	hspi1.Init.Mode = SPI_MODE_MASTER;
+	hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+	hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+	hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+	hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+	hspi1.Init.NSS = SPI_NSS_SOFT;
+	hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+	hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+	hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+	hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+	hspi1.Init.CRCPolynomial = 10;
+	if (HAL_SPI_Init(&hspi1) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN SPI1_Init 2 */
+
+	/* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+ * @brief SPI3 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_SPI3_Init(void)
+{
+
+	/* USER CODE BEGIN SPI3_Init 0 */
+
+	/* USER CODE END SPI3_Init 0 */
+
+	/* USER CODE BEGIN SPI3_Init 1 */
+
+	/* USER CODE END SPI3_Init 1 */
+	/* SPI3 parameter configuration*/
+	hspi3.Instance = SPI3;
+	hspi3.Init.Mode = SPI_MODE_MASTER;
+	hspi3.Init.Direction = SPI_DIRECTION_2LINES;
+	hspi3.Init.DataSize = SPI_DATASIZE_8BIT;
+	hspi3.Init.CLKPolarity = SPI_POLARITY_HIGH;
+	hspi3.Init.CLKPhase = SPI_PHASE_1EDGE;
+	hspi3.Init.NSS = SPI_NSS_SOFT;
+	hspi3.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+	hspi3.Init.FirstBit = SPI_FIRSTBIT_MSB;
+	hspi3.Init.TIMode = SPI_TIMODE_DISABLE;
+	hspi3.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+	hspi3.Init.CRCPolynomial = 10;
+	if (HAL_SPI_Init(&hspi3) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN SPI3_Init 2 */
+
+	/* USER CODE END SPI3_Init 2 */
+
+}
+
+/**
+ * @brief TIM1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM1_Init(void)
+{
+
+	/* USER CODE BEGIN TIM1_Init 0 */
+
+	/* USER CODE END TIM1_Init 0 */
+
+	TIM_MasterConfigTypeDef sMasterConfig = {0};
+	TIM_OC_InitTypeDef sConfigOC = {0};
+	TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+	/* USER CODE BEGIN TIM1_Init 1 */
+
+	/* USER CODE END TIM1_Init 1 */
+	htim1.Instance = TIM1;
+	htim1.Init.Prescaler = 1;
+	htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim1.Init.Period = 210-1;
+	htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim1.Init.RepetitionCounter = 0;
+	htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sConfigOC.OCMode = TIM_OCMODE_PWM1;
+	sConfigOC.Pulse = 0;
+	sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+	sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+	sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+	sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+	sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+	if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+	sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+	sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+	sBreakDeadTimeConfig.DeadTime = 0;
+	sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+	sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+	sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+	if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM1_Init 2 */
+
+	/* USER CODE END TIM1_Init 2 */
+	HAL_TIM_MspPostInit(&htim1);
+
+}
+
+/**
+ * @brief TIM4 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM4_Init(void)
+{
+
+	/* USER CODE BEGIN TIM4_Init 0 */
+
+	/* USER CODE END TIM4_Init 0 */
+
+	TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+	TIM_MasterConfigTypeDef sMasterConfig = {0};
+	TIM_OC_InitTypeDef sConfigOC = {0};
+
+	/* USER CODE BEGIN TIM4_Init 1 */
+
+	/* USER CODE END TIM4_Init 1 */
+	htim4.Instance = TIM4;
+	htim4.Init.Prescaler = 1;
+	htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim4.Init.Period = 220;
+	htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_Base_Init(&htim4) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+	if (HAL_TIM_ConfigClockSource(&htim4, &sClockSourceConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	if (HAL_TIM_PWM_Init(&htim4) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim4, &sMasterConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sConfigOC.OCMode = TIM_OCMODE_PWM1;
+	sConfigOC.Pulse = 0;
+	sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+	sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+	if (HAL_TIM_PWM_ConfigChannel(&htim4, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM4_Init 2 */
+
+	/* USER CODE END TIM4_Init 2 */
+	HAL_TIM_MspPostInit(&htim4);
+
+}
+
+/**
+ * @brief USART1 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_USART1_UART_Init(void)
+{
+
+	/* USER CODE BEGIN USART1_Init 0 */
+
+	/* USER CODE END USART1_Init 0 */
+
+	/* USER CODE BEGIN USART1_Init 1 */
+
+	/* USER CODE END USART1_Init 1 */
+	huart1.Instance = USART1;
+	huart1.Init.BaudRate = 460800;
+	huart1.Init.WordLength = UART_WORDLENGTH_8B;
+	huart1.Init.StopBits = UART_STOPBITS_1;
+	huart1.Init.Parity = UART_PARITY_NONE;
+	huart1.Init.Mode = UART_MODE_TX_RX;
+	huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+	huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+	if (HAL_UART_Init(&huart1) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN USART1_Init 2 */
+
+	/* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+ * @brief USART2 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_USART2_UART_Init(void)
+{
+
+	/* USER CODE BEGIN USART2_Init 0 */
+
+	/* USER CODE END USART2_Init 0 */
+
+	/* USER CODE BEGIN USART2_Init 1 */
+
+	/* USER CODE END USART2_Init 1 */
+	huart2.Instance = USART2;
+	huart2.Init.BaudRate = 115200;
+	huart2.Init.WordLength = UART_WORDLENGTH_8B;
+	huart2.Init.StopBits = UART_STOPBITS_1;
+	huart2.Init.Parity = UART_PARITY_NONE;
+	huart2.Init.Mode = UART_MODE_TX_RX;
+	huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+	huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+	if (HAL_UART_Init(&huart2) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN USART2_Init 2 */
+
+	/* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+ * Enable DMA controller clock
+ */
+static void MX_DMA_Init(void)
+{
+
+	/* DMA controller clock enable */
+	__HAL_RCC_DMA1_CLK_ENABLE();
+	__HAL_RCC_DMA2_CLK_ENABLE();
+
+	/* DMA interrupt init */
+	/* DMA1_Stream5_IRQn interrupt configuration */
+	HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
+	HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+	/* DMA2_Stream2_IRQn interrupt configuration */
+	HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 5, 0);
+	HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
+
+}
+
+/**
+ * @brief GPIO Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_GPIO_Init(void)
+{
+	GPIO_InitTypeDef GPIO_InitStruct = {0};
+	/* USER CODE BEGIN MX_GPIO_Init_1 */
+
+	/* USER CODE END MX_GPIO_Init_1 */
+
+	/* GPIO Ports Clock Enable */
+	__HAL_RCC_GPIOH_CLK_ENABLE();
+	__HAL_RCC_GPIOC_CLK_ENABLE();
+	__HAL_RCC_GPIOA_CLK_ENABLE();
+	__HAL_RCC_GPIOB_CLK_ENABLE();
+	__HAL_RCC_GPIOE_CLK_ENABLE();
+	__HAL_RCC_GPIOD_CLK_ENABLE();
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2|GPIO_PIN_6, GPIO_PIN_RESET);
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_14|GPIO_PIN_15
+			|GPIO_PIN_1, GPIO_PIN_RESET);
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13|GPIO_PIN_7, GPIO_PIN_RESET);
+
+	/*Configure GPIO pins : PC2 PC6 */
+	GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_6;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : PA4 */
+	GPIO_InitStruct.Pin = GPIO_PIN_4;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : PB0 */
+	GPIO_InitStruct.Pin = GPIO_PIN_0;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+	/*Configure GPIO pins : PE10 PE11 PE14 PE15
+                           PE1 */
+	GPIO_InitStruct.Pin = GPIO_PIN_10|GPIO_PIN_11|GPIO_PIN_14|GPIO_PIN_15
+			|GPIO_PIN_1;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : PE13 */
+	GPIO_InitStruct.Pin = GPIO_PIN_13;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : PD11 */
+	GPIO_InitStruct.Pin = GPIO_PIN_11;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+	/*Configure GPIO pins : PD13 PD7 */
+	GPIO_InitStruct.Pin = GPIO_PIN_13|GPIO_PIN_7;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : PC9 */
+	GPIO_InitStruct.Pin = GPIO_PIN_9;
+	GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+	/* USER CODE BEGIN MX_GPIO_Init_2 */
+
+	/* USER CODE END MX_GPIO_Init_2 */
+}
+
+/* USER CODE BEGIN 4 */
+uint8_t* ICON_TOGGLE(uint8_t ADD_H, uint8_t ADD_L, uint8_t pos, uint8_t status) {
+
+	uint8_t *temp_arr = (uint8_t*) malloc(8 * sizeof(uint8_t));
+
+	if (status == 0x00) {
+
+		button_color_status = 0x01;
+		temp_arr[0] = 0x5a;
+		temp_arr[1] = 0xa5;
+		temp_arr[2] = 0x05;
+		temp_arr[3] = 0x82;
+		temp_arr[4] = ADD_H;
+		temp_arr[5] = ADD_L;
+		temp_arr[6] = 0x00;
+		temp_arr[7] = GREEN_ICON[pos];
+
+		return temp_arr;
+
+	}
+
+	if (status == 0x01) {
+
+		button_color_status = 0x00;
+		temp_arr[0] = 0x5a;
+		temp_arr[1] = 0xa5;
+		temp_arr[2] = 0x05;
+		temp_arr[3] = 0x82;
+		temp_arr[4] = ADD_H;
+		temp_arr[5] = ADD_L;
+		temp_arr[6] = 0x00;
+		temp_arr[7] = BLUE_ICON[pos];
+
+		return temp_arr;
+
+
+	}
+	free(temp_arr);
+	return NULL;
+
+}
+
+void display_icon_clr(uint8_t ADD_H, uint8_t icon_add, uint8_t pos) {
+
+	uint8_t temp_arr[8] = { 0 };
+	temp_arr[0] = 0x5a;
+	temp_arr[1] = 0xa5;
+	temp_arr[2] = 0x05;
+	temp_arr[3] = 0x82;
+	temp_arr[4] = ADD_H;
+	temp_arr[5] = icon_add;
+	temp_arr[6] = 0x00;
+	temp_arr[7] = BLUE_ICON[pos];
+	HAL_UART_Transmit(&huart1, temp_arr, sizeof(temp_arr), HAL_MAX_DELAY);
+
+}
+
+uint8_t* display_data(uint8_t ADDH, uint8_t ADDL, uint8_t BUTTON_STATUS) {
+
+	uint8_t *temp_data = (uint8_t*) malloc(8 * sizeof(uint8_t));
+
+	//	uint8_t
+
+	if ((ADDH == 0x10) && (ADDL > 0x00)) {
+
+		switch (ADDL) {
+
+		case 0x01:
+			cls_con(temp_add);
+			inc_drc_icon(BUTTON_STATUS);
+			osDelay(50);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x01, 0, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x02:
+			cls_con(temp_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x02, 1, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x03:
+			cls_con(temp_add);
+			osDelay(50);
+			inc_drc_icon(BUTTON_STATUS);
+			osDelay(50);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x03, 2, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x04:
+			cls_con(temp_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x04, 3, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x05:
+			cls_con(temp_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x05, 4, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x06:
+			cls_con(temp_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x06, 5, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x07:
+			cls_con(temp_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x07, 6, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x08:
+			cls_con(temp_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x08, 7, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+			//		case 0x09:
+			//			temp_data = ICON_TOGGLE(0x10, 0x09, 9, BUTTON_STATUS);
+			//			return temp_data;
+			//			break;
+			//
+			//		case 0x0A:
+			//			temp_data = ICON_TOGGLE(0x10, 0x10, 10, BUTTON_STATUS);
+			//			return temp_data;
+			//			break;
+			//
+			//		case 0x11:
+			//			temp_data = ICON_TOGGLE(0x10, 0x11, 11, BUTTON_STATUS);
+			//			return temp_data;
+			//			break;
+
+		case 0x12:
+			cls_con(clear_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x12, 11, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+		case 0x13:
+			cls_con(clear_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x13, 12, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+			//		case 0x35:
+			//			cls_con(temp_add);
+			//
+			//			inc_drc_icon(BUTTON_STATUS);
+			//
+			//			HAL_UART_Transmit(&huart1,
+			//					ICON_TOGGLE(0x10, 0x35, 13, BUTTON_STATUS), 8,
+			//					HAL_MAX_DELAY);
+			//			break;
+
+		case 0x14:
+			cls_con(clear_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x14, 13, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x15:
+			cls_con(clear_add);
+
+			inc_drc_icon(BUTTON_STATUS);
+
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x15, 14, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x16:
+
+			cls_con(clear_add);
+
+			inc_drc_icon(BUTTON_STATUS);
+
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x16, 15, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x17:
+
+			cls_con(clear_add);
+
+			inc_drc_icon(BUTTON_STATUS);
+
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x17, 16, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x18:
+
+			cls_con(clear_add);
+
+			inc_drc_icon(BUTTON_STATUS);
+
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x18, 17, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+
+		case 0x19:
+			cls_con(clear_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x19, 18, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+		case 0x20:
+			cls_con(clears_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x20, 19, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+		case 0x21:
+			cls_con(clears_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x21, 20, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+		case 0x22:
+			cls_con(clears_add);
+			inc_drc_icon(BUTTON_STATUS);
+			HAL_UART_Transmit(&huart1,
+					ICON_TOGGLE(0x10, 0x22, 21, BUTTON_STATUS), 8,
+					HAL_MAX_DELAY);
+			break;
+			//		case 0x33:
+			//			cls_con(temp_add);
+			//			inc_drc_icon(BUTTON_STATUS);
+			//			HAL_UART_Transmit(&huart1,
+			//					ICON_TOGGLE(0x10, 0x33, 23, BUTTON_STATUS), 8,
+			//					HAL_MAX_DELAY);
+			//			break;
+			//		case 0x34:
+			//			cls_con(temp_add);
+			//			inc_drc_icon(BUTTON_STATUS);
+			//			HAL_UART_Transmit(&huart1,
+			//					ICON_TOGGLE(0x10, 0x34, 24, BUTTON_STATUS), 8,
+			//					HAL_MAX_DELAY);
+			//			break;
+			//		case 0x22:
+			//			cls_con(temp_add);
+			//			inc_drc_icon(BUTTON_STATUS);
+			//			HAL_UART_Transmit(&huart1,
+			//					ICON_TOGGLE(0x10, 0x22, 17, BUTTON_STATUS), 8,
+			//					HAL_MAX_DELAY);
+			//			break;
+			//		case 0x35:
+			//			cls_con(temp_add);
+			//			inc_drc_icon(BUTTON_STATUS);
+			//			HAL_UART_Transmit(&huart1,
+			//					ICON_TOGGLE(0x10, 0x35, 25, BUTTON_STATUS), 8,
+			//					HAL_MAX_DELAY);
+			//			break;
+			//		case 0x96:
+			//			cls_con(temp_add);
+			//			inc_drc_icon(BUTTON_STATUS);
+			//			HAL_UART_Transmit(&huart1,
+			//					ICON_TOGGLE(0x10, 0x9F, 26, BUTTON_STATUS), 8,
+			//					HAL_MAX_DELAY);
+			//			break;
+
+		}
+
+	}
+	free(temp_data);
+
+}
+
+void cls_con(int data) {
+	//	int pos = 0;
+	pos =  data;
+	if ((pos == 9) || (pos == 10)){
+		pos = pos;
+	}
+	else if (pos <= 8){
+		pos -= 1;
+	}
+
+	else if ((pos >= 12)  || (pos <= 19)){
+		//	if (12 <= pos <= 19){
+		pos -= 7;
+	}
+	else if (pos >= 20){
+		pos -= 6;
+	}
+
+	display_icon_clr(0x10, data, pos);
+}
+
+void inc_drc_icon(uint8_t BUTTON_STATUS) {
+	osDelay(50);
+	HAL_UART_Transmit(&huart1, ICON_TOGGLE(0x10, 0x10, 9, BUTTON_STATUS), 8,
+			HAL_MAX_DELAY);
+	HAL_UART_Transmit(&huart1, ICON_TOGGLE(0x10, 0x09, 8, BUTTON_STATUS), 8,
+			HAL_MAX_DELAY);
+	HAL_UART_Transmit(&huart1, ICON_TOGGLE(0x10, 0x11, 10, BUTTON_STATUS), 8,
+			HAL_MAX_DELAY);
+	//	HAL_UART_Transmit(&huart1, ICON_TOGGLE(0x10, 0x35, 13, BUTTON_STATUS), 8,
+	//			HAL_MAX_DELAY);
+}
+
+void intiger_val_send(uint8_t icon_address, uint8_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x00, 0x00,
+			0x00 };
+	send_intiger_val[5] = 0x3F + icon_address;
+	send_intiger_val[7] = value;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+
+//vt_value
+void intiger_val_vt_send(uint8_t icon_address, uint16_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x00, 0x00,
+			0x00 };
+	uint8_t msb = 0x00;
+	uint8_t lsb = 0x00;
+	lsb = value;
+	msb = value >> 8;
+	send_intiger_val[5] = 0x3F + icon_address;
+	send_intiger_val[6] = msb;
+	send_intiger_val[7] = lsb;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+void PIP_VAL(uint8_t icon_address, uint8_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x00, 0x00,
+			0x00 };
+	send_intiger_val[5] = 0x3F + icon_address;
+	send_intiger_val[6] = 0xFF;
+	send_intiger_val[7] = value;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+
+void float_value_send(float data, uint8_t add) {
+	uint8_t float_data_send[8] =
+	{ 0x5A, 0xA5, 0x05, 0x82, 0x10, add, 0x00, 0x00 };
+	int value = 0.0;
+
+
+
+
+	value = data * 100;
+	char temp_float_data[2] = { 0, 0 };
+	char float_hexStr[3];
+
+	sprintf(temp_float_data, "%X", value);
+	sprintf("hex %s", temp_float_data);
+	float_hexStr[0] = temp_float_data[0];
+	float_hexStr[1] = temp_float_data[1];
+	float_hexStr[2] = '\0';
+	result3 = (uint8_t) strtol(float_hexStr, NULL, 16);
+	float_data_send[7] = result3;
+	HAL_UART_Transmit(&huart1, float_data_send, 8, HAL_MAX_DELAY);
+}
+
+
+
+
+void float_value_16bit_send(float data, uint8_t add) {
+	uint8_t float_data_send[8] =
+	{ 0x5A, 0xA5, 0x05, 0x82, 0x10, add, 0x00, 0x00 };
+	uint8_t msb = 0x00;
+	uint8_t lsb = 0x00;
+	int value = 0.0;
+	value = data * 100;
+	char temp_float_data[4] = { 0, 0, 0, 0 };
+	char float_hexStr[5];
+
+	sprintf(temp_float_data, "%X", value);
+	sprintf("hex %s", temp_float_data);
+	float_hexStr[0] = temp_float_data[0];
+	float_hexStr[1] = temp_float_data[1];
+	float_hexStr[2] = temp_float_data[2];
+	float_hexStr[3] = temp_float_data[3];
+	float_hexStr[4] = '\0';
+	result4 = (uint16_t) strtol(float_hexStr, NULL, 16);
+	lsb = result4;
+	msb = result4 >> 8;
+	float_data_send[6] = msb;
+	float_data_send[7] = lsb;
+	HAL_UART_Transmit(&huart1, float_data_send, 8, HAL_MAX_DELAY);
+}
+//void getRTCcurrentTime() {
+//    // Get current time
+//    if (HAL_RTC_GetTime(&hrtc, &currentTime, RTC_FORMAT_BIN) == HAL_OK) {
+//        uint8_t hours = currentTime.Hours;
+//        uint8_t minutes = currentTime.Minutes;
+//        seconds = currentTime.Seconds;
+//        // Print or use the current time as needed
+//    }
+//}
+
+void cls_cmd(uint8_t pos) {
+	if (DISPLAY_INPUT[5] == 0xBC) {
+		if (mode_select_number == 0x01) {
+			PCV_FLAG = 0;
+			VCV_FLAG = 0;
+			PSV_FLAG = 0;
+			STAND_BY = 1;
+
+			SIMV_FLAG = 0;
+			BAG_FLAG = 0;
+			stand_ppr_set_flag = 1;
+		}
+	}  if (DISPLAY_INPUT[8] == 0x6A){
+		//		uint8_t clear_graph[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x03, 0x05, 0x00, 0x00 };
+		//		uint8_t clear_graph2[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x03, 0x0B, 0x00, 0x00 };
+		//		HAL_UART_Transmit(&huart1, clear_graph, sizeof(clear_graph),
+		//				HAL_MAX_DELAY);
+		//		HAL_UART_Transmit(&huart1, clear_graph2, sizeof(clear_graph2),
+		//				HAL_MAX_DELAY);
+		if (mode_select_number == 0x02) {
+
+			PID_VALUE_SET_FLAG = 1;
+			//			Value_reset_flag = 1;
+
+			PCV_FLAG = 0;
+			VCV_FLAG = 1;
+			PSV_FLAG = 0;
+			SIMV_FLAG = 0;
+			STAND_BY = 0;
+			BAG_FLAG = 0;
+			vcv_ppr_set_flag = 0;
+			PID_FLOW_SET_VALUE(user_flowe, 0.5, 0.5, 0, 5);
+		}
+		else if (mode_select_number == 0x03) {
+			PID_VALUE_SET_FLAG = 1;
+			//			Value_reset_flag = 1;
+
+			PCV_FLAG = 1;
+			VCV_FLAG = 0;
+			STAND_BY = 0;
+			SIMV_FLAG = 0;
+			PSV_FLAG = 0;
+			BAG_FLAG = 0;
+			pcv_ppr_set_flag = 1;
+
+			if ((RR_temp_value >= 5) && (RR_temp_value < 12)) {
+				PID_FLOW_SET_VALUE(PLR_temp_value, 0.1, 0.1, 0, 5);
+			} else if ((RR_temp_value >= 12) && (RR_temp_value <= 30)) {
+				PID_FLOW_SET_VALUE(PLR_temp_value, 0.5, 0.5, 0, 5);
+			}
+
+		} else if (mode_select_number == 0x04) {
+			PID_VALUE_SET_FLAG = 1;
+			//			Value_reset_flag = 1;
+
+			PCV_FLAG = 0;
+			PSV_FLAG = 0;
+			STAND_BY = 0;
+
+			SIMV_FLAG = 1;
+			VCV_FLAG = 0;
+			BAG_FLAG = 0;
+			PS_flag = 1;
+			//			Mandatory_FLAG = 1;
+
+			simv_ppr_set_flag = 1;
+
+		} else if (mode_select_number == 0x05) {
+			PID_VALUE_SET_FLAG = 1;
+			//			Value_reset_flag = 1;
+
+			VCV_FLAG = 0;
+			PSV_FLAG = 1;
+			STAND_BY = 0;
+			SIMV_FLAG = 0;
+			PCV_FLAG = 0;
+			BAG_FLAG = 0;
+			psv_ppr_set_flag = 1;
+			rr_flag = 0;
+			PS_flag = 1;
+			//			if ((RR_temp_value >= 5) && (RR_temp_value < 12)) {
+			PID_FLOW_SET_VALUE(PS_temp_value, 0.1, 0.1, 0, 5);
+			//			} else if ((RR_temp_value >= 12) && (RR_temp_value <= 30)) {
+			//				PID_FLOW_SET_VALUE(PS_temp_value, 0.5, 0.5, 0, 5);
+
+		} else if (mode_select_number == 0x06) {
+			PID_VALUE_SET_FLAG = 1;
+			//			Value_reset_flag = 1;
+			VCV_FLAG = 0;
+			PSV_FLAG = 0;
+			STAND_BY = 0;
+			SIMV_FLAG = 0;
+			PCV_FLAG = 0;
+			BAG_FLAG = 1;
+			bag_ppr_set_flag = 1;
+
+		}
+	}
+	if (DISPLAY_INPUT[8] == 0x69){
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+		PCV_FLAG = 0;
+		VCV_FLAG = 0;
+		PSV_FLAG = 0;
+		STAND_BY = 1;
+		SIMV_FLAG = 0;
+		BAG_FLAG = 0;
+		stand_ppr_set_flag = 1;
+	}
+	//	if (DISPLAY_INPUT[5] == 0x82){
+	//		if (loop_select_number == 0x01){
+	//			//			data_val3[19] = 0x64;
+	//			//		data_val2[25] = 0x64;
+	//			//			data_val3[21] = result;
+	//			//			data_val3[15] = result2;
+	//			data_val3[16] = result2;
+	//			//		data_val2[21] = result;
+	//			//				data_val2[21] = 0x64;
+	//			//				data_val2[15] = 0x00;
+	//			for (int a = 0; a < 16; a++)
+	//				display_payload1[a] = data_val2[a];
+	//			HAL_UART_Transmit(&huart1, display_payload1, sizeof(display_payload1),
+	//					HAL_MAX_DELAY);
+	//		}
+	//	}
+	//	if (DISPLAY_INPUT[5] == 0x37){
+	//		if (mode_select_number == 0x02) {
+	//
+	//			PCV_FLAG = 0;
+	//			VCV_FLAG = 1;
+	//			PSV_FLAG = 0;
+	//			SIMV_FLAG = 0;
+	//			STAND_BY = 0;
+	//			BAG_FLAG = 0;
+	//			vcv_ppr_set_falg = 1;
+	//			PID_FLOW_SET_VALUE(user_flowe, 1, 1, 0, 10);
+	//			//			PID_FLOW_SET_VALUE(pressure_flow, 1, 1, 0, 10);
+	//		}
+	//		inc_drc_icon(0X01);
+	//	}
+	if (DISPLAY_INPUT[5] == 0XA4) {
+		if(PCV_FLAG == 1){
+			if ((RR_temp_value >= 5) && (RR_temp_value < 12)) {
+				PID_FLOW_SET_VALUE(PLR_temp_value, 0.1, 0.1, 0, 5);
+			} else if ((RR_temp_value >= 12) && (RR_temp_value <= 30)) {
+				PID_FLOW_SET_VALUE(PLR_temp_value, 0.5, 0.5, 0, 5);
+			}
+		}
+		else if (PSV_FLAG == 1){
+			PID_FLOW_SET_VALUE(PS_temp_value, 0.1, 0.1, 0, 5);
+		}
+
+		vt_temp_value = vt_value;
+		RR_temp_value = RR_value;
+		//		BKP1 = RR_value;
+		PLR_temp_value = PLR_value;
+		temp_insP_value = insP_value;
+		temp_exp_value = exp_value;
+		PU_temp_value = PU_value;
+		PEEP_temp_value = PEEP_value - 1;
+		PS_temp_value = PS_value;
+		P_peak_alarm_max_value = P_peak_alarm_max_value;
+		P_peak_alarm_min_value = P_peak_alarm_min_value;
+		MV_alarm_max_value = MV_alarm_max_value;
+		MV_alarm_min_value = MV_alarm_min_value;
+		RR_alarm_max_value = RR_alarm_max_value;
+		RR_alarm_min_value = RR_alarm_min_value;
+		peep_alarm_max_value = peep_alarm_max_value;
+		peep_alarm_min_value = peep_alarm_min_value;
+		O2_alarm_max_value = O2_alarm_max_value;
+		O2_alarm_min_value = O2_alarm_min_value;
+
+
+
+		PID_VALUE_SET_FLAG = 1;
+		Value_reset_flag = 1;
+		vt_flag = 0;
+		plt_flag = 0;
+		rr_flag = 0;
+		i_flag = 0;
+		e_flag = 0;
+		pu_flag = 0;
+		trg_flag = 0;
+		pip_flag = 0;
+		peep_flag = 0;
+		PS_flag = 0;
+		Mute_flag = 0;
+		P_peak_alarm_min_flag = 0;
+		MV_alarm_min_flag     = 0;
+		RR_alarm_min_flag     = 0;
+		peep_alarm_min_flag   = 0;
+		O2_alarm_min_flag     = 0;
+		P_peak_alarm_max_flag = 0;
+		MV_alarm_max_flag     = 0;
+		RR_alarm_max_flag     = 0;
+		peep_alarm_max_flag   = 0;
+		O2_alarm_max_flag     = 0;
+
+		HAL_UART_Transmit(&huart1,
+				ICON_TOGGLE(0x10, temp_add, ((int) temp_add - 1), 0x01), 8,
+				HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart1,
+				ICON_TOGGLE(0x10, clear_add, ((int) clear_add - 7), 0x01), 8,
+				HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart1,
+				ICON_TOGGLE(0x10, clears_add, ((int) clears_add - 13), 0x01), 8,
+				HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart1,
+				ICON_TOGGLE(0x10, clearss_add, ((int) clearss_add - 28), 0x01), 8,
+				HAL_MAX_DELAY);
+		HAL_UART_Transmit(&huart1,
+				ICON_TOGGLE(0x10, PS_add, ((int) PS_add - 161), 0x01), 8,
+				HAL_MAX_DELAY);
+		inc_drc_icon(0X01);
+
+		for (int a = 0; a < 9; a++)
+			DISPLAY_INPUT[a] = 0x00;
+	}
+	else if (DISPLAY_INPUT[5] == 0xC3){
+		//		PID_VALUE_SET_FLAG = 0;
+		//		CLT_FLAG = 1;
+		//		VCV_FLAG = 0;
+		//		PSV_FLAG = 0;
+		//		STAND_BY = 0;
+		//		SIMV_FLAG = 0;
+		//		PCV_FLAG = 0;
+		//		BAG_FLAG = 0;
+		PID_VALUE_SET_FLAG = 1;
+		//			Value_reset_flag = 1;
+		CLT_FLAG = 0;
+		VCV_FLAG = 0;
+		PSV_FLAG = 0;
+		STAND_BY = 0;
+		SIMV_FLAG = 0;
+		PCV_FLAG = 0;
+		BAG_FLAG = 0;
+		psv_ppr_set_flag = 1;
+		rr_flag = 0;
+		PS_flag = 1;
+		NVIC_SystemReset();
+
+		//			if ((RR_temp_value >= 5) && (RR_temp_value < 12)) {
+		PID_FLOW_SET_VALUE(PS_temp_value, 0.1, 0.1, 0.15, 0.5);
+	}
+	else if (DISPLAY_INPUT[5] == 0xE2){
+		//		PID_VALUE_SET_FLAG = 0;
+		//		CLT_FLAG = 1;
+		//		VCV_FLAG = 0;
+		//		PSV_FLAG = 0;
+		//		STAND_BY = 0;
+		//		SIMV_FLAG = 0;
+		//		PCV_FLAG = 0;
+		//		BAG_FLAG = 0;
+		PID_VALUE_SET_FLAG = 1;
+		//			Value_reset_flag = 1;
+		CLT_FLAG = 1;
+		VCV_FLAG = 0;
+		PSV_FLAG = 0;
+		STAND_BY = 0;
+		SIMV_FLAG = 0;
+		PCV_FLAG = 0;
+		BAG_FLAG = 0;
+		psv_ppr_set_flag = 1;
+		rr_flag = 0;
+		PS_flag = 1;
+
+		//			if ((RR_temp_value >= 5) && (RR_temp_value < 12)) {
+		PID_FLOW_SET_VALUE(PS_temp_value, 0.1, 0.1, 0.15, 0.5);
+	}
+	for (int a = 0; a < 9; a++)
+		DISPLAY_INPUT[a] = 0x00;
+}
+void Breath_calclution(void) {
+	BPS = 60.0 / (float) RR_temp_value;
+
+	Ti = ((float) temp_insP_value
+			/ ((float) temp_insP_value + (float) temp_exp_value))* BPS;
+	Te = BPS - Ti;
+
+	numatic_insp_ctr = Ti * 1000;
+	numatic_exp_ctr = Te * 1000;
+	total_time = BPS * 1000;
+
+	insPause_vale = ((float) PU_temp_value / (float) 100) * numatic_insp_ctr;
+}
+void Pre_set_value_show(void) {
+	intiger_val_vt_send(1, vt_value);
+	intiger_val_send(2, PLR_value);
+	intiger_val_send(3, RR_value);
+	intiger_val_send(5, PU_value);
+	intiger_val_send(6, TRG_value);
+	PIP_VAL(7, PIP_value);
+	//	intiger_val_send(7, PIP_value);
+	intiger_val_send(8, PEEP_value);
+	intiger_val_send(9, PS_value);
+	//	intiger_val_send(0x43, Play_value);
+	//	intiger_val_send(0x24, insP_value);
+	//	intiger_val_send(0x25, exp_value);
+	intiger_val_send(0x14,P_peak_alarm_max_value);
+	intiger_val_send(0x15,P_peak_alarm_min_value);
+	intiger_val_send(0x16,MV_alarm_max_value);
+	intiger_val_send(0x17,MV_alarm_min_value);
+	intiger_val_send(0x18,RR_alarm_max_value);
+	intiger_val_send(0x19,RR_alarm_min_value);
+	intiger_val_send(0x1A,peep_alarm_max_value);
+	intiger_val_send(0x21,peep_alarm_min_value);
+	intiger_val_send(0x22,O2_alarm_max_value);
+	intiger_val_send(0x23,O2_alarm_min_value);
+	intiger_val_send(0x24, insP_value);
+	intiger_val_send(0x25, exp_value);
+}
+//..............icon change..........
+void modes_icon_change(m_icon_add) {
+	uint8_t mode_icon_data[8] =
+	{ 0x5a, 0xa5, 0x05, 0x82, 0x10, 0x23, 0x00, 0x00 };
+	mode_icon_data[7] = m_icon_add;
+	HAL_UART_Transmit(&huart1, mode_icon_data, 8, HAL_MAX_DELAY);
+}
+
+void battery_icon_change(uint8_t battery_icon_add) {
+	uint8_t battery_icon_data[8] = {0x5A, 0XA5, 0X05, 0X82, 0X10, 0XD5, 0X00, 0X00};
+	battery_icon_data[7] = battery_icon_add;
+	HAL_UART_Transmit(&huart1, battery_icon_data, 8, HAL_MAX_DELAY);
+}
+void muteUnmute_icon_change(uint8_t mute_icon_add) {
+	uint8_t battery_icon_data[8] = {0x5A, 0XA5, 0X05, 0X82, 0X10, 0X35, 0X00, 0X00};
+	battery_icon_data[7] = mute_icon_add;
+	HAL_UART_Transmit(&huart1, battery_icon_data, 8, HAL_MAX_DELAY);
+}
+void alarm_icon_change(uint8_t alarm_icon_add) {
+	uint8_t battery_icon_data[8] = {0x5A, 0XA5, 0X05, 0X82, 0X10, 0X5B, 0X00, 0X00};
+	battery_icon_data[7] = alarm_icon_add;
+	HAL_UART_Transmit(&huart1, battery_icon_data, 8, HAL_MAX_DELAY);
+}
+void leak_icon_change(uint8_t leak_icon_add) {
+	uint8_t leak_icon_data[8] = {0x5A, 0XA5, 0X05, 0X82, 0X10, 0XCE, 0X00, 0X00};
+	leak_icon_data[7] = leak_icon_add;
+	HAL_UART_Transmit(&huart1, leak_icon_data, 8, HAL_MAX_DELAY);
+}
+void O2_Sensor(uint8_t O2_icon_add) {
+	uint8_t O2_data[8] = {0x5A, 0XA5, 0X05, 0X82, 0X10, 0X68, 0X00, 0X00};
+	O2_data[7] = O2_icon_add;
+	HAL_UART_Transmit(&huart1, O2_data, 8, HAL_MAX_DELAY);
+}
+
+void AC_Plug(uint8_t AC_icon_add) {
+	uint8_t AC_data[8] = {0x5A, 0XA5, 0X05, 0X82, 0X12, 0X00, 0X00, 0X00};
+	AC_data[7] = AC_icon_add;
+	HAL_UART_Transmit(&huart1, AC_data, 8, HAL_MAX_DELAY);
+}
+int Pressure_set_ppr(void) {
+	compare_time = 2000 / 100;
+
+	for (int a = 0; a <= compare_time; a++) {
+		P_data_compare = P_sensor_data();
+		PPR_DUTY_SET_VALUE++;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PPR_DUTY_SET_VALUE);
+		osDelay(100);
+		for (int b = 0; b <= 10; b++) {
+			if ((a == compare_time) && (P_data_compare >= 18)
+					&& (P_data_compare <= 22)) {
+				DUTY_SET_FLAG = 1;
+				return 1;
+			}
+		}
+	}
+
+}
+int P_sensor_data(void) {
+	uint16_t P_ADC_DATA = 0;
+	float P_sensor_data = 0.0;
+	float P_mbar_data = 0.0;
+	int final_P_data = 0;
+
+	P_ADC_DATA = (final_sensor_data[3] << 8) | final_sensor_data[4];
+	P_sensor_data = ((P_ADC_DATA - DigoutP_Min) / Sensp) - 1.496;
+	P_mbar_data = P_sensor_data * 70.307;
+	final_P_data = (int) P_mbar_data;
+	return final_P_data;
+}
+
+void update_mbar_history(float new_mbar) {
+	mbar_history[index1] = new_mbar;
+	index1 = (index1 + 1) % SMOOTHING_WINDOW;  // Keep index within bounds
+
+	// Calculate moving average
+	float sum = 0;
+	for (int i = 0; i < SMOOTHING_WINDOW; i++) {
+		sum += mbar_history[i];
+	}
+	mbar2_smooth = sum / SMOOTHING_WINDOW;
+}
+void play_icon_change(uint8_t play_icon_add) {
+	uint8_t play_icon_data[8] = {0x5A, 0XA5, 0X05, 0X82, 0X10, 0X35, 0X00, 0X00};
+	play_icon_data[7] = play_icon_add;
+	HAL_UART_Transmit(&huart1, play_icon_data, 8, HAL_MAX_DELAY);
+}
+//double user_flowe_cal(void) {
+//	double INStime = Ti * 1000;
+//	double user_flow;
+//	user_flow = (((int) vt_temp_value / INStime) / 2) * 100;
+//	return (user_flow - 2.5) + 100;
+//}
+
+double user_flowe_cal(void) {
+	double INStime;
+	double user_flow;
+	INStime = (((int) vt_temp_value / Ti));
+	user_flow = (INStime * 60) / 1000;
+	return (user_flow) + 100;
+}
+//left hand values from display
+void vt_alarm(uint16_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0xD7, 0x00,
+			0x00 };
+	uint8_t msb = 0x00;
+	uint8_t lsb = 0x00;
+	lsb = (uint16_t)value;
+	msb = (uint16_t)value >> 8;
+	send_intiger_val[6] = msb;
+	send_intiger_val[7] = lsb;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+void mv_alarm(void) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x65, 0x00,
+			0x00 };
+	uint8_t msb = 0x00;
+	uint8_t lsb = 0x00;
+	int value = 0.00;
+	MV_value_var = (sensor_flow_for_vt * RR_temp_value) / 1000;
+	value = MV_value_var * 100;
+	char temp_float_data[4] = { 0, 0, 0, 0 };
+	char float_hexStr[5];
+
+	sprintf(temp_float_data, "%X", value);
+	sprintf("hex %s", temp_float_data);
+	float_hexStr[0] = temp_float_data[0];
+	float_hexStr[1] = temp_float_data[1];
+	float_hexStr[2] = temp_float_data[2];
+	float_hexStr[3] = temp_float_data[3];
+	float_hexStr[4] = '\0';
+	result4 = (uint16_t) strtol(float_hexStr, NULL, 16);
+	lsb = result4;
+	msb = result4 >> 8;
+	send_intiger_val[6] = msb;
+	send_intiger_val[7] = lsb;
+	//        HAL_UART_Transmit(&huart1, send_integer_val, 8, HAL_MAX_DELAY);
+
+	//    send_intiger_val[7] = MV_data;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+
+void rr_alarm(uint8_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x66, 0x00,
+			0x00 };
+	send_intiger_val[7] = value;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+
+void P_Peak_pressure(uint8_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0xD8, 0x00,
+			0x00 };
+	send_intiger_val[7] = value;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+void Peep_live_pressure(uint8_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x67, 0x00,
+			0x00 };
+	send_intiger_val[7] = value;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+void Compliance(uint8_t value){
+	uint8_t send_intiger_val[8] = {0x5A, 0xA5, 0x05, 0x82, 0x10, 0x9A, 0x00,
+			0x00};
+	send_intiger_val[7] = value;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+void BUZZ_PWM(void){
+	//	__HAL_TIM_SET_AUTORELOAD(&htim4, x*24);
+	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 500);
+	osDelay(500);
+	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
+	osDelay(500);
+}
+
+void VCV_MODE(void) {
+
+	VT_UPDATE_FLAG = 0;
+	PID_CALIBRATE_FLAG = 1;
+
+	if (((user_flowe - PID_FLOW_VAR) <= 1) && ((user_flowe - PID_FLOW_VAR) >= 0)) {
+		PID_CALIBRATE_FLAG = 0;
+		if(user_flowe < PID_FLOW_VAR){
+			if (user_flowe != PID_FLOW_VAR) {
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut--);
+				//					break;
+			}
+		}else if(user_flowe > PID_FLOW_VAR){
+			if (user_flowe != PID_FLOW_VAR) {
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut++);
+				//	break;
+			}
+		}
+	}
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+	osDelay(numatic_insp_ctr - insPause_vale);
+
+	PID_CALIBRATE_FLAG = 0;
+	//	osTimerStart(Button_clearHandle, (numatic_exp_ctr - 2000));
+	PID_FLOW_VAR = xyz;
+
+	if (PU_temp_value > 0) {
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		osDelay(insPause_vale);
+	}
+	previous_pressure_first = result2;
+	VT_UPDATE_FLAG = 1;
+	Peep_control_flag = 1;
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+	//	Peep_control_flag = 1;
+	//	VT_UPDATE_FLAG = 1;
+	PSV_FLAG = 0;
+	hI = 0;
+	P_HI = 0;
+	exp_cycle_counter++;
+	osDelay(numatic_exp_ctr);
+	Peep_control_flag = 0;
+	Peep_live_pressure(result2);
+
+}
+void PCV_MODE(void) {
+
+	VT_UPDATE_FLAG = 0;
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+	osDelay(numatic_insp_ctr - insPause_vale);
+	PID_CALIBRATE_FLAG = 1;
+	PID_FLOW_VAR = hI;
+	if (PU_temp_value > 0) {
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		osDelay(insPause_vale);
+	}
+	previous_pressure_first = result2;
+	VT_UPDATE_FLAG = 1;
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+	Peep_control_flag = 1;
+	exp_cycle_counter++;
+	osDelay(numatic_exp_ctr);
+	Peep_control_flag = 0;
+	Peep_live_pressure(result2);
+	PID_CALIBRATE_FLAG = 0;
+}
+int Mandatory_MODE(void) {
+
+	VT_UPDATE_FLAG = 0;
+	PID_CALIBRATE_FLAG = 1;
+	Spontaneous_FLAG = 0;
+
+	if (((user_flowe - PID_FLOW_VAR) <= 1) && ((user_flowe - PID_FLOW_VAR) >= 0)) {
+		PID_CALIBRATE_FLAG = 0;
+		if(user_flowe < PID_FLOW_VAR){
+			if (user_flowe != PID_FLOW_VAR) {
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut--);
+				//					break;
+			}
+		}else if(user_flowe > PID_FLOW_VAR){
+			if (user_flowe != PID_FLOW_VAR) {
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut++);
+				//	break;
+			}
+		}
+	}
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+	//	holi = 1;
+	osDelay(numatic_insp_ctr);
+
+	PID_CALIBRATE_FLAG = 0;
+	//	osTimerStart(Button_clearHandle, (numatic_exp_ctr - 2000));
+	PID_FLOW_VAR = xyz;
+	if (PU_temp_value > 0) {
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		osDelay(insPause_vale);
+	}
+	previous_pressure_first = result2;
+	Mandarine();
+	return 1;
+}
+void Mandarine(void){
+	VT_UPDATE_FLAG = 1;
+	//	Peep_control_flag = 1;
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+	//	start_time_ms = HAL_GetTick();
+
+	//	holi = 0;
+	Peep_control_flag = 1;
+	exp_cycle_counter++;
+	Mandatory_FLAG = 0;
+	//	start_time_ms = HAL_GetTick();  // Get the system time in milliseconds
+
+	osDelay(numatic_exp_ctr);  // Delay for numatic_exp_ctr milliseconds
+	Mandatory_FLAG = 1;
+
+	//	end_time_ms = HAL_GetTick();  // Get the system time after delay
+	//	Spontaneous_FLAG = 0;
+
+	//	elapsed_time_ms = end_time_ms - start_time_ms;  // Calculate elapsed time in milliseconds
+
+	hI = 0;
+	P_HI = 0;
+}
+void Spontaneous_MODE(void){
+
+	//	P_TRG = (PIP_value + result2);
+	//	uint8_t store2;
+	//	TRG_value = PIP_value;
+	//	if (y>=(100-TRG_value)){
+	VT_UPDATE_FLAG = 0;
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+	//		osDelay(numatic_insp_ctr - insPause_vale);
+	PID_CALIBRATE_FLAG = 1;
+	PID_FLOW_VAR = xyz;
+	//		if (result2>PS_temp_value){
+	//			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+	//			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+	//			//			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
+	//		}
+	if (PU_temp_value > 0) {
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		osDelay(insPause_vale);
+
+	}
+	previous_pressure_first = result2;
+	if (result2>PS_temp_value){
+		VT_UPDATE_FLAG = 1;
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+		//		Mandatory_MODE();
+		Peep_control_flag = 1;
+		exp_cycle_counter++;
+		Peep_control_flag = 0;
+		Peep_live_pressure(result2);
+		PID_CALIBRATE_FLAG = 0;
+	}
+
+	SIMV_MODE();
+}
+void SIMV_MODE(void){
+	//	Mandatory_FLAG = 1;
+
+	//	if(getElapsedMilliseconds() <= numatic_insp_ctr){
+	//		Mandatory_MODE();
+	//	}
+	Mandatory_FLAG = 1;
+	if(Mandatory_FLAG == 1){
+		Spontaneous_FLAG = 0;
+		Mandatory_MODE();
+	}
+	if(Mandatory_FLAG == 0){
+		Spontaneous_FLAG = 1;
+		PSV_MODE();
+	}
+
+	//	osDelay(100);
+	//	Spontaneous_FLAG = 0;
+	//		TRG_value = PIP_value;
+	//		//	if(holi = false){
+	//		if (y>=(99-TRG_value)){
+	//
+	//			//	exp_cycle_counter++;
+	//			Spontaneous_FLAG = 1;
+	//			Spontaneous_MODE();
+	//			osDelay(numatic_exp_ctr - 250);
+	//			Spontaneous_FLAG = 0;
+	//
+	//		}
+	//	}
+}
+
+void PSV_MODE(void){
+	//	P_TRG = (PIP_value + result2);
+	//	uint8_t store2;
+	TRG_value = PIP_value;
+	if (xy>=(100-TRG_value)){
+		VT_UPDATE_FLAG = 0;
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+		//		osDelay(numatic_insp_ctr - insPause_vale);
+		PID_CALIBRATE_FLAG = 1;
+		PID_FLOW_VAR = 0;
+		//		if (result2>PS_temp_value){
+		//			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		//			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+		//			//			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
+		//		}
+		if (PU_temp_value > 0) {
+			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+			osDelay(insPause_vale);
+
+		}
+		previous_pressure_first = result2;
+		sensor_flow_for_vt = 0;
+	}
+	//	store2 = prev_pressure_first;
+	if (result2>PS_temp_value){
+		//		else if (result2>PS_temp_value){
+		//	else if(y<(100)){
+		VT_UPDATE_FLAG = 1;
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+		Peep_control_flag = 1;
+		exp_cycle_counter++;
+		osDelay(200);
+		Peep_control_flag = 0;
+		Peep_live_pressure(result2);
+		PID_CALIBRATE_FLAG = 0;
+	}
+}
+float Cuff_Leak_Test(void){
+	//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
+	PS_temp_value = 40;
+	RR_temp_value = 0;
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 97);
+	osDelay(8000);
+	PID_CALIBRATE_FLAG = 1;
+	PID_FLOW_VAR = xyz;
+	previous_pressure_first = 0;
+	//	sensor_flow_for_vt = 0;
+	rr_alarm(RR_temp_value);
+	previous_pressure_second = pressure_adc;
+	VT_UPDATE_FLAG = 1;
+	Peep_control_flag = 1;
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
+	//    Peep_control_flag = 1;
+	exp_cycle_counter++;
+	osDelay(3500);
+	//	CLT_FLAG = 2;
+	Peep_live_pressure(result2);
+	hI = 0;
+	P_HI = 0;
+	Peep_control_flag = 0;
+	//    Peep_live_pressure(P_HI);
+
+	PID_CALIBRATE_FLAG = 0;
+	//    osDelay(numatic_insp_ctr);
+	float CLV = (result / result2);
+	Leak_Percentage = (CLV / result) * 100;
+
+	if (CLV >= LEAK_THRESHOLD && Leak_Percentage >= LEAK_PERCENT_THRESHOLD)
+
+		return Leak_Percentage;
+}
+float CLT_MODE(void){
+	//	P_TRG = (PIP_value + result2);
+	//	uint8_t store2;
+	//	TRG_value = PIP_value;
+	PS_temp_value = 50;
+	RR_temp_value = 0;
+	if (CLT_FLAG == 1){
+		VT_UPDATE_FLAG = 0;
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 95);
+		osDelay(10000);
+		//		osDelay(numatic_insp_ctr - insPause_vale);
+		PID_CALIBRATE_FLAG = 1;
+		PID_FLOW_VAR = xyz;
+		PID_FLOW_VAR = 0;
+		//		if (PU_temp_value > 0) {
+		//			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		//			osDelay(insPause_vale);
+		//
+		//		}
+		previous_pressure_first = result2;
+		sensor_flow_for_vt = 0;
+		previous_pressure_second = pressure_adc;
+		//	}
+		//	store2 = prev_pressure_first;
+		//	if (result2>PS_temp_value){
+		//		else if (result2>PS_temp_value){
+		//	else if(y<(100)){
+		Peep_control_flag = 1;
+		VT_UPDATE_FLAG = 1;
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_RESET);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 75);
+
+		exp_cycle_counter++;
+		osDelay(3500);
+		Peep_control_flag = 0;
+		Peep_live_pressure(result2);
+		PID_CALIBRATE_FLAG = 0;
+		CLT_FLAG = 2;
+		float CLV = (result / result2);
+		Leak_Percentage = (CLV / result) * 100;
+
+		if (CLV >= LEAK_THRESHOLD && Leak_Percentage >= LEAK_PERCENT_THRESHOLD)
+
+			return Leak_Percentage;
+	}
+
+}
+void BAG_MODE(void) {
+	VT_UPDATE_FLAG = 1;
+	PID_FLOW_VAR = xyz;
+	previous_pressure_first = result2;
+	STAND_BY = 1;
+	//	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 140);
+	Peep_live_pressure(result2);
+	//	STAND_BY = 0;
+	//	VT_UPDATE_FLAG = 0;
+}
+void PID_FLOW_SET_VALUE(double SETTING_POINT, double kp, double kd, double ki,
+		uint32_t PID_time) {
+
+	TempSetpoint = (int)SETTING_POINT;
+	PID(&TPID, &Temp, &PIDOut, &TempSetpoint, kp, kd, ki, _PID_P_ON_E,
+			_PID_CD_DIRECT);
+	PID_SetMode(&TPID, _PID_MODE_AUTOMATIC);
+	PID_SetSampleTime(&TPID, PID_time);
+	PID_SetOutputLimits(&TPID, 75, 160);
+}
+void VT_KEYPAD(void){
+	if((DISPLAY_INPUT1[0]==0x5A)&&(DISPLAY_INPUT1[1]==0xA5)&&(DISPLAY_INPUT1[3]==0x83)
+			&&(DISPLAY_INPUT1[4]==0x10)&&(DISPLAY_INPUT1[5]==0x95)){
+
+		if((DISPLAY_INPUT1[8] == 0xFF) && (DISPLAY_INPUT1[9] == 0xFF)){
+			Keypad[0] = 0x00;
+			Keypad[1] = 0x00;
+			Keypad[2] = 0x00;
+			Keypad[3] = DISPLAY_INPUT1[7] & 0x0F;
+			Keypad[4] = 0x01;
+			for(int j = 0; j < 12; j++){
+				DISPLAY_INPUT1[j] = 0x00;
+			}
+			//                            memset(DISPLAY_INPUT1,0,13);
+		}
+		else if((DISPLAY_INPUT1[9] == 0xFF) && (DISPLAY_INPUT1[10] == 0xFF)){
+			Keypad[0] = 0x00;
+			Keypad[1] = 0x00;
+			Keypad[2] = DISPLAY_INPUT1[7] & 0x0F;
+			Keypad[3] = DISPLAY_INPUT1[8] & 0x0F;
+			Keypad[4] = 0x02;
+			for(int j = 0; j < 12; j++){
+				DISPLAY_INPUT1[j] = 0x00;
+			}
+			//                            memset(DISPLAY_INPUT1,0,13);
+		}
+		else if((DISPLAY_INPUT1[10] == 0xFF) && (DISPLAY_INPUT1[11] == 0xFF)){
+			Keypad[0] = 0x00;
+			Keypad[1] = DISPLAY_INPUT1[7] & 0x0F;
+			Keypad[2] = DISPLAY_INPUT1[8] & 0x0F;
+			Keypad[3] = DISPLAY_INPUT1[9] & 0x0F;
+			Keypad[4] = 0x03;
+			for(int j = 0; j < 12; j++){
+				DISPLAY_INPUT1[j] = 0x00;
+			}
+			//                            memset(DISPLAY_INPUT1,0,13);
+		}
+		else if((DISPLAY_INPUT1[11] == 0xFF) && (DISPLAY_INPUT1[12] == 0xFF)){
+			Keypad[0] = DISPLAY_INPUT1[7] & 0x0F;
+			Keypad[1] = DISPLAY_INPUT1[8] & 0x0F;
+			Keypad[2] = DISPLAY_INPUT1[9] & 0x0F;
+			Keypad[3] = DISPLAY_INPUT1[10] & 0x0F;
+			Keypad[4] = 0x04;
+			for(int j = 0; j < 12; j++){
+				DISPLAY_INPUT1[j] = 0x00;
+			}
+			//                            memset(DISPLAY_INPUT1,0,13);
+		}
+		HAL_UART_AbortReceive_IT(&huart1);
+		vt_value = (((int)Keypad[0]*1000)+((int)Keypad[1]*100)+((int)Keypad[2]*10)+(int)Keypad[3]);
+		vt_temp_value = vt_value;
+
+		if((vt_value >= 20) && (vt_value <= 1500)){
+			intiger_val_vt_send(0x01, vt_value);
+		}else{
+			vt_value = vt_value;
+		}
+	}
+}
+//..........................oxygen_sensor............
+void SPI_Init(void)
+{
+	HAL_SPI_Init(&hspi3);
+}
+HAL_StatusTypeDef MCP3551_ReadData(void)
+{
+	uint8_t txBuffer[1] = {MCP3551_START_CONVERSION_CMD};
+	uint8_t tempBuffer[3] = {0};  // Temporary buffer
+	uint32_t rawData = 0;
+
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
+	HAL_SPI_Transmit(&hspi3, txBuffer, 1, HAL_MAX_DELAY); // Send command
+	HAL_SPI_Receive(&hspi3, tempBuffer, 3, HAL_MAX_DELAY); // Read ADC data
+	HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+
+	// Combine received bytes into a 24-bit number
+	rawData = ((uint32_t)tempBuffer[0] << 16) | ((uint32_t)tempBuffer[1] << 8) | tempBuffer[2];
+
+	// Ignore erroneous max values (0xFFFFFF)
+	if (rawData == 0xFFFFFF)
+	{
+		return HAL_ERROR; // Signal an error to avoid processing invalid data
+	}
+
+	// MCP3551 is a 24-bit signed ADC, apply sign extension for 32-bit storage
+	if (rawData & 0x800000)  // Check if the sign bit is set (MSB of 24-bit)
+	{
+		rawData |= 0xFF000000; // Sign-extend to 32-bit (keep negative values correct)
+	}
+
+	adcValue = rawData; // Store corrected ADC value
+	return HAL_OK;
+}
+
+void oxy_per(void) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x68, 0x00,
+			0x00 };
+	uint8_t msb = 0x00;
+	uint8_t lsb = 0x00;
+	int value = 0.0;
+	//MV_value_var = (sensor_flow_for_vt * RR_temp_value) / 1000;
+	//value = MV_value_var * 100;
+	value = Percent;
+	char temp_float_data[4] = { 0, 0, 0, 0 };
+	char float_hexStr[5];
+
+	sprintf(temp_float_data, "%X", value);
+	sprintf("hex %s", temp_float_data);
+	float_hexStr[0] = temp_float_data[0];
+	float_hexStr[1] = temp_float_data[1];
+	float_hexStr[2] = temp_float_data[2];
+	float_hexStr[3] = temp_float_data[3];
+	float_hexStr[4] = '\0';
+	result4 = (uint16_t) strtol(float_hexStr, NULL, 16);
+	lsb = result4;
+	msb = result4 >> 8;
+	send_intiger_val[6] = msb;
+	send_intiger_val[7] = lsb;
+	//        HAL_UART_Transmit(&huart1, send_integer_val, 8, HAL_MAX_DELAY);
+
+	//    send_intiger_val[7] = MV_data;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+float convert_ADC_to_Percentage(uint32_t adcValue) {
+	Oxygen = ((float)adcValue / 6221656) * 100;
+	Percent = ((float)adcValue / 6221656) * 1000;
+	if(Percent >= 1000){
+		Percent =1000;
+
+	}// 2^24 - 1 = 16777215
+	return Percent;
+}
+
+
+void SPI_Write(uint8_t *data, uint8_t len){
+	HAL_SPI_Transmit(&W25Q_SPI, data, len, HAL_MAX_DELAY);
+}
+void SPI_Read(uint8_t *data, uint32_t len){
+	HAL_SPI_Receive(&W25Q_SPI, data, len, HAL_MAX_DELAY);
+}
+void W25Q_Reset(void){
+	uint8_t tDATA[2];
+	tDATA[0] = 0x66;
+	tDATA[1] = 0x99;
+	csLOW();
+	SPI_Write(tDATA, 2);
+	csHIGH();
+	osDelay(500);
+}
+void W25Q_Read(uint32_t startPage, uint8_t offset, uint32_t size, uint8_t *rData){
+	uint8_t tData[5];
+	uint32_t memAddress = (startPage * 256) + offset;
+	if(numBLOCK < 1024){
+		tData[0] = 0x03;
+		tData[1] = (memAddress >> 16) & 0xFF;
+		tData[2] = (memAddress >> 8) & 0xFF;
+		tData[3] = (memAddress) & 0xFF;
+	}
+	csLOW();
+	SPI_Write(tData, 4);
+	SPI_Read(rData, size);
+	csHIGH();
+
+}
+
+void W25Q_Read1(uint32_t startPage, uint8_t offset, uint32_t size, uint16_t *rData) {
+	uint8_t tData[5];
+	uint32_t memAddress = (startPage * 256) + offset;
+	uint32_t numBytesToRead = size * 2;  // size in uint16_t, so bytes = size * 2
+	uint8_t *readBuffer = malloc(numBytesToRead);
+	if (readBuffer == NULL) {
+		// Handle malloc failure
+		return;
+	}
+
+	if (numBLOCK < 1024) {
+		tData[0] = 0x03;  // Read data command
+		tData[1] = (memAddress >> 16) & 0xFF;
+		tData[2] = (memAddress >> 8) & 0xFF;
+		tData[3] = memAddress & 0xFF;
+	}
+
+	csLOW();
+	SPI_Write(tData, 4);
+	SPI_Read(readBuffer, numBytesToRead);
+	csHIGH();
+
+	// Convert bytes to uint16_t words (big endian)
+	for (uint32_t i = 0; i < size; i++) {
+		rData[i] = ((uint16_t)readBuffer[2*i] << 8) | readBuffer[2*i + 1];
+	}
+
+	free(readBuffer);
+}
+
+void write_enable(void){
+	uint8_t tData = 0x06;
+	csLOW();
+	SPI_Write(&tData, 1);
+	csHIGH();
+	osDelay(50);
+}
+void write_disable(void){
+	uint8_t tData = 0x04;
+	csLOW();
+	SPI_Write(&tData, 1);
+	csHIGH();
+	osDelay(10);
+}
+
+uint32_t bytetoWrite(uint32_t size, uint16_t offset){
+	if((size + offset) < 256){
+		return size;
+
+	}
+	else{
+		return 256 - offset;
+	}
+}
+void erase_sector(uint8_t numSector){
+	uint8_t tData[6];
+	uint32_t memAddress = numSector * 16 * 256;
+
+	write_enable();
+	if(numBLOCK < 512){
+		tData[0] = 0x20;
+		tData[1] = (memAddress >> 24) & 0xFF;
+		tData[2] = (memAddress >> 16) & 0xFF;
+		tData[3] = (memAddress >> 8) & 0xFF;
+		tData[4] = (memAddress ) & 0xFF;
+
+		csLOW();
+		SPI_Write(tData, 4);
+		csHIGH();
+	}
+	osDelay(450);
+	write_disable();
+
+}
+
+
+void W25Q_Write_Page(uint32_t page, uint16_t offset, uint32_t size, uint8_t *data){
+	uint8_t tData[266];
+	uint32_t startPage = page;
+	uint32_t endPage = startPage + ((size + offset - 1) / 256);
+	uint32_t numPage = endPage - startPage + 1;
+
+	uint16_t startSector = startPage / 16;
+	uint16_t endSector = endPage / 16;
+	uint16_t numSector = endSector - startSector + 1;
+	for (uint8_t i = 0; i < numSector; i++){
+		erase_sector(startSector++);
+	}
+	uint32_t dataPosition = 0;
+	for(uint8_t i = 0; i < numPage; i++){
+		uint32_t memAddress = (startPage * 256) + offset;
+		uint16_t bytesRemaining = bytetoWrite(size, offset);
+		uint32_t index = 0;
+
+		write_enable();
+		if(numBLOCK < 512){
+			tData[0] = 0x02;
+			tData[1] = (memAddress >> 16) & 0xFF;
+			tData[2] = (memAddress >> 8) & 0xFF;
+			tData[3] = (memAddress) & 0xFF;
+			index = 4;
+		}
+
+		uint32_t bytestoSend = bytesRemaining + index;
+		for(uint8_t i = 0; i < bytesRemaining; i++){
+			tData[index++] = data[i + dataPosition];
+		}
+		csLOW();
+		SPI_Write(tData, bytestoSend);
+		csHIGH();
+		startPage++;
+		offset = 0;
+		size = size - bytesRemaining;
+		dataPosition = dataPosition + bytesRemaining;
+
+		osDelay(10);
+		write_disable();
+	}
+}
+
+void W25Q_Write_Page1(uint32_t page, uint16_t offset, uint32_t size, uint16_t *data){
+	uint8_t tData[266];
+	uint32_t startPage = page;
+	uint32_t endPage = startPage + ((size + offset - 1) / 256);
+	uint32_t numPage = endPage - startPage + 1;
+
+	uint16_t startSector = startPage / 16;
+	uint16_t endSector = endPage / 16;
+	uint16_t numSector = endSector - startSector + 1;
+
+	// Erase all sectors involved
+	for (uint8_t i = 0; i < numSector; i++){
+		erase_sector(startSector++);
+	}
+
+	uint32_t dataPosition = 0;
+	for(uint8_t i = 0; i < numPage; i++){
+		uint32_t memAddress = (startPage * 256) + offset;
+		uint16_t bytesRemaining = bytetoWrite(size, offset);
+
+		uint32_t index = 0;
+
+		write_enable();
+
+		if(numBLOCK < 512){
+			tData[0] = 0x02;  // Page Program command
+			tData[1] = (memAddress >> 16) & 0xFF;
+			tData[2] = (memAddress >> 8) & 0xFF;
+			tData[3] = memAddress & 0xFF;
+			index = 4;
+		}
+
+		// Now copy uint16_t data into tData buffer as bytes (big endian)
+		// bytesRemaining is in bytes, so number of uint16_t elements to write is bytesRemaining/2
+		uint16_t numWords = bytesRemaining / 2;
+
+		for(uint16_t j = 0; j < numWords; j++){
+			uint16_t val = data[dataPosition/2 + j];
+			tData[index++] = (val >> 8) & 0xFF;  // high byte
+			tData[index++] = val & 0xFF;         // low byte
+		}
+
+		// If bytesRemaining is odd, write the last byte separately
+		if(bytesRemaining % 2 != 0){
+			tData[index++] = ((uint8_t*)data)[dataPosition + bytesRemaining - 1];
+		}
+
+		csLOW();
+		SPI_Write(tData, index);
+		csHIGH();
+
+		startPage++;
+		offset = 0;
+		size = size - bytesRemaining;
+		dataPosition = dataPosition + bytesRemaining;
+
+		osDelay(10);
+		write_disable();
+	}
+}
+
+
+void intiger_val_send_Backup(uint8_t icon_address, uint8_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x00, 0x00,
+			0x00 };
+	send_intiger_val[5] = 0x3F + icon_address;
+	send_intiger_val[7] = value;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+void intiger_val_vt_send_Backup(uint8_t icon_address, uint16_t value) {
+	uint8_t send_intiger_val[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x10, 0x00, 0x00,
+			0x00 };
+	uint8_t msb = 0x00;
+	uint8_t lsb = 0x00;
+	lsb = value;
+	msb = value >> 8;
+	send_intiger_val[5] = 0x3F + icon_address;
+	send_intiger_val[6] = msb;
+	send_intiger_val[7] = lsb;
+	HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val),
+			HAL_MAX_DELAY);
+}
+
+//void intiger_val_send_Backup(uint8_t icon_address, uint16_t value) {
+//    uint8_t send_intiger_val[9] = {
+//        0x5A, 0xA5, 0x06, 0x82, 0x10, 0x00, 0x00, 0x00, 0x00
+//    };
+//    send_intiger_val[5] = 0x3F + icon_address;
+//    send_intiger_val[7] = (value >> 8) & 0xFF;  // High byte
+//    send_intiger_val[8] = value & 0xFF;         // Low byte
+//
+//    HAL_UART_Transmit(&huart1, send_intiger_val, sizeof(send_intiger_val), HAL_MAX_DELAY);
+//}
+/* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_dwin_data */
+/**
+ * @brief  Function implementing the dwin thread.
+ * @param  argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_dwin_data */
+void dwin_data(void const * argument)
+{
+	/* USER CODE BEGIN 5 */
+	Pre_set_value_show();
+	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_11, GPIO_PIN_SET);
+
+
+	/* Infinite loop */
+	for(;;)
+	{
+
+		if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_RESET){
+			Backup_flag = 1;
+			Backup_flag1 = 1;
+			Display_Switch_Flag = 1;
+		}
+		else if((HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_SET)){
+			Backup_flag = 0;
+			Display_Switch_Flag = 0;
+			//			Backup_flag1 = 1;
+		}
+
+		if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_RESET)){
+			Backup_flag = 1;
+			Backup_flag1 = 1;
+			AC_Detection_Flag = 1;
+			AC_Plug(0x78);
+		}
+		else if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET)){
+			Backup_flag = 0;
+			AC_Detection_Flag = 0;
+			AC_Plug(0x77);
+			//			Backup_flag1 = 1;
+		}
+		//		if(Battery_average < 3315){
+		//			Backup_flag = 1;
+		//			Backup_flag1 = 1;
+		//			Battery_ADC_Flag = 1;
+		//		}
+		//		else if(Battery_average > 3315){
+		//			Backup_flag = 0;
+		//			Battery_ADC_Flag = 0;
+		//		}
+
+		Breath_calclution();
+		user_flowe = user_flowe_cal();
+		//take the button status for display data//
+		HAL_UART_Receive_IT(&huart1, DISPLAY_INPUT1, 13);
+		osDelay(100);
+		HAL_UART_AbortReceive_IT(&huart1);
+		if(DISPLAY_INPUT1[2]==0x06){
+			for(int a = 0; a<=9; a++){
+				DISPLAY_INPUT[a]=DISPLAY_INPUT1[a];
+				received_length++;
+				DISPLAY_INPUT1[a]=0x00;
+			}
+			if(DISPLAY_INPUT1[2]==0x0A){
+				//								DISPLAY_INPUT1[ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] = 0x00;
+				for(int i = 0; i<13; i++){
+					DISPLAY_INPUT1[i] = 0x00;
+				}
+			}
+		}
+
+		VT_KEYPAD();
+		if (DISPLAY_INPUT[5] == 0x9D) {
+			if (DISPLAY_INPUT[8] == 0x01) {
+				vt_flag = 0;
+				plt_flag = 0;
+				rr_flag = 0;
+				i_flag = 1;
+				e_flag = 0;
+				pu_flag = 0;
+				trg_flag = 0;
+				pip_flag = 0;
+				peep_flag = 0;
+				PS_flag = 0;
+				display_data(0x10, 0x04, 0x00);
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			} else if (DISPLAY_INPUT[8] == 0x02) {
+				vt_flag = 0;
+				plt_flag = 0;
+				rr_flag = 0;
+				i_flag = 0;
+				e_flag = 1;
+				pu_flag = 0;
+				trg_flag = 0;
+				pip_flag = 0;
+				peep_flag = 0;
+				PS_flag = 0;
+				display_data(0x10, 0x04, 0x00);
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			}
+			temp_add = 0x04;
+		}else if (((DISPLAY_INPUT[5] == 0x95) && (DISPLAY_INPUT[8] == 0x01))) {
+			vt_flag = 1;
+			plt_flag = 0;
+			rr_flag = 0;
+			i_flag = 0;
+			e_flag = 0;
+			pu_flag = 0;
+			trg_flag = 0;
+			pip_flag = 0;
+			peep_flag = 0;
+			PS_flag = 0;
+			display_data(0x10, 0x01, 0x00);
+			temp_add = 0x01;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+
+		} else if (((DISPLAY_INPUT[5] == 0x9B) && (DISPLAY_INPUT[8] == 0x01))) {
+			vt_flag = 0;
+			plt_flag = 1;
+			rr_flag = 0;
+			i_flag = 0;
+			e_flag = 0;
+			pu_flag = 0;
+			trg_flag = 0;
+			pip_flag = 0;
+			peep_flag = 0;
+			PS_flag = 0;
+			display_data(0x10, 0x02, 0x00);
+			temp_add = 0x02;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		} else if (((DISPLAY_INPUT[5] == 0x9C) && (DISPLAY_INPUT[8] == 0x01))) {
+			osDelay(50);
+			vt_flag = 0;
+			plt_flag = 0;
+			rr_flag = 1;
+			i_flag = 0;
+			e_flag = 0;
+			pu_flag = 0;
+			trg_flag = 0;
+			pip_flag = 0;
+			peep_flag = 0;
+			PS_flag = 0;
+			display_data(0x10, 0x03, 0x00);
+			temp_add = 0x03;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		} else if (((DISPLAY_INPUT[5] == 0x9E) && (DISPLAY_INPUT[8] == 0x01))) {
+			vt_flag = 0;
+			plt_flag = 0;
+			rr_flag = 0;
+			i_flag = 0;
+			e_flag = 0;
+			pu_flag = 1;
+			trg_flag = 0;
+			pip_flag = 0;
+			peep_flag = 0;
+			PS_flag = 0;
+			display_data(0x10, 0x05, 0x00);
+			temp_add = 0x05;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}else if (((DISPLAY_INPUT[5] == 0x9F) && (DISPLAY_INPUT[8] == 0x01))) {
+			vt_flag = 0;
+			plt_flag = 0;
+			rr_flag = 0;
+			i_flag = 0;
+			e_flag = 0;
+			pu_flag = 0;
+			trg_flag = 1;
+			pip_flag = 0;
+			peep_flag = 0;
+			PS_flag = 0;
+			display_data(0x10, 0x06, 0x00);
+			temp_add = 0x06;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		} else if (((DISPLAY_INPUT[5] == 0xA0) && (DISPLAY_INPUT[8] == 0x01))) {
+			vt_flag = 0;
+			plt_flag = 0;
+			rr_flag = 0;
+			i_flag = 0;
+			e_flag = 0;
+			pu_flag = 0;
+			trg_flag = 0;
+			pip_flag = 1;
+			peep_flag = 0;
+			PS_flag = 0;
+			display_data(0x10, 0x07, 0x00);
+			temp_add = 0x07;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		} else if (((DISPLAY_INPUT[5] == 0xA1) && (DISPLAY_INPUT[8] == 0x01))) {
+			vt_flag = 0;
+			plt_flag = 0;
+			rr_flag = 0;
+			i_flag = 0;
+			e_flag = 0;
+			pu_flag = 0;
+			trg_flag = 0;
+			pip_flag = 0;
+			peep_flag = 1;
+			PS_flag = 0;
+			display_data(0x10, 0x08, 0x00);
+			temp_add = 0x08;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		} else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xAF) && (DISPLAY_INPUT[8] == 0x01))) {
+			vt_flag = 0;
+			plt_flag = 0;
+			rr_flag = 0;
+			i_flag = 0;
+			e_flag = 0;
+			pu_flag = 0;
+			trg_flag = 0;
+			pip_flag = 0;
+			peep_flag = 0;
+			PS_flag = 1;
+			display_data(0x10, 0x22, 0x00);
+			clears_add = 0x22;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA5)
+
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 1;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x12, 0x00);
+			clear_add = 0x12;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA6)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 1;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x13, 0x00);
+			clear_add = 0x13;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA7)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 1;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x14, 0x00);
+			clear_add = 0x14;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA8)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 1;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x15, 0x00);
+			clear_add = 0x15;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA9)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 1;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x16, 0x00);
+			clear_add = 0x16;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xAA)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 1;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x17, 0x00);
+			clear_add = 0x17;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xAB)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 1;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x18, 0x00);
+			clear_add = 0x18;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xAC)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 1;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x19, 0x00);
+			clear_add = 0x19;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xAD)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 1;
+			O2_alarm_min_flag = 0;
+			display_data(0x10, 0x20, 0x00);
+			clears_add = 0x20;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+		else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xAE)
+				&& (DISPLAY_INPUT[8] == 0x01))) {
+			P_peak_alarm_min_flag = 0;
+			MV_alarm_min_flag = 0;
+			RR_alarm_min_flag = 0;
+			peep_alarm_min_flag = 0;
+			P_peak_alarm_max_flag = 0;
+			MV_alarm_max_flag = 0;
+			RR_alarm_max_flag = 0;
+			peep_alarm_max_flag = 0;
+			O2_alarm_max_flag = 0;
+			O2_alarm_min_flag = 1;
+			display_data(0x10, 0x21, 0x00);
+			clears_add = 0x21;
+			for (int a = 0; a < 9; a++)
+				DISPLAY_INPUT[a] = 0x00;
+		}
+
+
+		////////////////////This part to increase and dicres all the values////////////////////////////////////
+		if (i_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				insP_value += 0x01;
+				intiger_val_send(0x24, insP_value);
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			} else if (((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01))) {
+				insP_value -= 0x01;
+				intiger_val_send(0x24, insP_value);
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			}
+		} else if (e_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				exp_value += 0x01;
+				intiger_val_send(0x25, exp_value);
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			} else if (((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01))) {
+				exp_value -= 0x01;
+				intiger_val_send(0x25, exp_value);
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			}
+		} else if (vt_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				//				if (vt_value == 1500) {
+				//					vt_value = vt_value;
+				//				} else {
+				//					Value_reset_flag = 0;
+				//					vt_value_reset_flag = 1;
+				//					osTimerStart(Touch_value_resetHandle, 5000);
+				//					vt_value += 10;
+				//					intiger_val_vt_send(0x01, vt_value);
+				//					for (int a = 0; a < 9; a++)
+				//						DISPLAY_INPUT[a] = 0x00;
+				//				}
+			} else if (((DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8] == 0x01))) {
+				//				if (vt_value == 100) {
+				//					vt_value = vt_value;
+				//				} else {
+				//					Value_reset_flag = 0;
+				//					vt_value_reset_flag = 1;
+				//					osTimerStart(Touch_value_resetHandle, 5000);
+				//					vt_value -= 10;
+				//					intiger_val_vt_send(0x01, vt_value);
+				//					for (int a = 0; a < 9; a++)
+				//						DISPLAY_INPUT[a] = 0x00;
+				//				}
+			}
+		} else if (plt_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				if (PLR_value == 60) {
+					PLR_value = PLR_value;
+				} else {
+					Value_reset_flag = 0;
+					plt_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PLR_value += 1;
+					intiger_val_send(0x02, PLR_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			} else if ((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01)) {
+				if (PLR_value == 5) {
+					PLR_value = PLR_value;
+				} else {
+					Value_reset_flag = 0;
+					plt_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PLR_value -= 1;
+					intiger_val_send(0x02, PLR_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		} else if (rr_flag == 1) {
+			if ((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01)) {
+				if (RR_value == 60) {
+					RR_value = RR_value;
+				} else {
+					Value_reset_flag = 0;
+					rr_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					RR_value += 1;
+					intiger_val_send(0x03, RR_value);
+					rr_alarm(RR_value);
+					//					for (int a = 0; a < 9; a++)
+					//						DISPLAY_INPUT[a] = 0x00;
+				}
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			} else if (((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01))) {
+				if (RR_value == 5) {
+					RR_value = RR_value;
+				} else {
+					Value_reset_flag = 0;
+					rr_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					RR_value -= 1;
+					intiger_val_send(0x03, RR_value);
+					rr_alarm(RR_value);
+					//					for (int a = 0; a < 9; a++)
+					//						DISPLAY_INPUT[a] = 0x00;
+				}
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			}
+		} else if (pu_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				if (PU_value == 50) {
+					PU_value = PU_value;
+				} else {
+					Value_reset_flag = 0;
+					pu_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PU_value += 1;
+					intiger_val_send(0x05, PU_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			} else if (((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01))) {
+				if (PU_value == 0) {
+					PU_value = PU_value;
+				} else {
+					Value_reset_flag = 0;
+					pu_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PU_value -= 1;
+					intiger_val_send(0x05, PU_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		} else if (trg_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				TRG_value += 1;
+				intiger_val_send(0x06, TRG_value);
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			} else if (((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01))) {
+				TRG_value -= 1;
+				intiger_val_send(0x06, TRG_value);
+				for (int a = 0; a < 9; a++)
+					DISPLAY_INPUT[a] = 0x00;
+			}
+		} else if (pip_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				if (PIP_value == 0){
+					PIP_value = PIP_value;
+				}else{
+					Value_reset_flag = 0;
+					pip_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PIP_value += 1;
+					//					intiger_val_send(0x07, PIP_value);
+					PIP_VAL(0x07, PIP_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}else if (((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01))) {
+				if(PIP_value == -20){
+					PIP_value = PIP_value;
+				}else{
+					Value_reset_flag = 0;
+					pip_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PIP_value -= 1;
+					//					intiger_val_send(0x07, PIP_value);
+					PIP_VAL(0x07, PIP_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}else if (peep_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				if (PEEP_value == 30) {
+					PEEP_value = PEEP_value;
+				} else {
+					Value_reset_flag = 0;
+					peep_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PEEP_value += 1;
+					intiger_val_send(0x08, PEEP_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			} else if (((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01))) {
+				if (PEEP_value == 0) {
+					PEEP_value = PEEP_value;
+				} else {
+					Value_reset_flag = 0;
+					peep_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PEEP_value -= 1;
+					intiger_val_send(0x08, PEEP_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		} 		else if (P_peak_alarm_max_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if (P_peak_alarm_max_value==60){
+					P_peak_alarm_max_value=P_peak_alarm_max_value;
+				}
+				else{
+					P_peak_alarm_max_value +=1;
+					intiger_val_send(0x14,P_peak_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if (P_peak_alarm_max_value==20){
+					P_peak_alarm_max_value=P_peak_alarm_max_value;
+				}
+				else{
+					P_peak_alarm_max_value -= 1;
+					intiger_val_send(0x14,P_peak_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+		else if (P_peak_alarm_min_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if (P_peak_alarm_min_value==20){
+					P_peak_alarm_min_value = P_peak_alarm_min_value;
+				}
+				else{
+					P_peak_alarm_min_value +=1;
+					intiger_val_send(0x15,P_peak_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if (P_peak_alarm_min_value==0){
+					P_peak_alarm_min_value = P_peak_alarm_min_value;
+				}
+				else{
+					P_peak_alarm_min_value -= 1;
+					intiger_val_send(0x15,P_peak_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+		else if (MV_alarm_max_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if (MV_alarm_max_value==50){
+					MV_alarm_max_value = MV_alarm_max_value;
+				}
+				else{
+					MV_alarm_max_value +=1;
+					intiger_val_send(0x16,MV_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if (MV_alarm_max_value==3){
+					MV_alarm_max_value = MV_alarm_max_value;
+				}
+				else{
+					MV_alarm_max_value -= 1;
+					intiger_val_send(0x16,MV_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+		else if (MV_alarm_min_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if(MV_alarm_min_value==47){
+					MV_alarm_min_value = MV_alarm_min_value;
+				}
+				else{
+					MV_alarm_min_value +=1;
+					intiger_val_send(0x17,MV_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if(MV_alarm_min_value==0){
+					MV_alarm_min_value = MV_alarm_min_value;
+				}
+				else{
+					MV_alarm_min_value -= 1;
+					intiger_val_send(0x17,MV_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+		else if (RR_alarm_max_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if(RR_alarm_max_value==60){
+					RR_alarm_max_value = RR_alarm_max_value;
+				}
+				else{
+					RR_alarm_max_value +=1;
+					intiger_val_send(0x18,RR_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if(RR_alarm_max_value==8){
+					RR_alarm_max_value = RR_alarm_max_value;
+				}
+				else{
+					RR_alarm_max_value -= 1;
+					intiger_val_send(0x18,RR_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+		else if (RR_alarm_min_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if (RR_alarm_min_value==8){
+					RR_alarm_min_value = RR_alarm_min_value;
+				}
+				else{
+					RR_alarm_min_value +=1;
+					intiger_val_send(0x19,RR_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if(RR_alarm_min_value==0){
+					RR_alarm_min_value = RR_alarm_min_value;
+				}
+				else{
+					RR_alarm_min_value -= 1;
+					intiger_val_send(0x19,RR_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+		else if (peep_alarm_max_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if (peep_alarm_max_value==30){
+					peep_alarm_max_value = peep_alarm_max_value;
+				}
+				else{
+					peep_alarm_max_value +=1;
+					intiger_val_send(0x1A,peep_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if (peep_alarm_max_value==10){
+					peep_alarm_max_value = peep_alarm_max_value;
+				}
+				else{
+					peep_alarm_max_value -= 1;
+					intiger_val_send(0x1A,peep_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+		else if (peep_alarm_min_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if (peep_alarm_min_value==10){
+					peep_alarm_min_value = peep_alarm_min_value;
+				}
+				else{
+					peep_alarm_min_value +=1;
+					intiger_val_send(0x21,peep_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if (peep_alarm_min_value==0){
+					peep_alarm_min_value = peep_alarm_min_value;
+				}
+				else{
+					peep_alarm_min_value -= 1;
+					intiger_val_send(0x21,peep_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+		else if (O2_alarm_max_flag == 1){
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if (O2_alarm_max_value==100){
+					O2_alarm_max_value = O2_alarm_max_value;
+				}
+				else{
+					O2_alarm_max_value +=1;
+					intiger_val_send(0x22,O2_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if (O2_alarm_max_value==60){
+					O2_alarm_max_value = O2_alarm_max_value;
+				}
+				else{
+					O2_alarm_max_value -= 1;
+					intiger_val_send(0x22,O2_alarm_max_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+
+		else if (O2_alarm_min_flag == 1){
+
+			if(((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))){
+				if (O2_alarm_min_value==60){
+					O2_alarm_min_value = O2_alarm_min_value;
+				}
+				else{
+					O2_alarm_min_value +=1;
+					intiger_val_send(0x23,O2_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+
+			else if (((DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0xA3) && (DISPLAY_INPUT[8]== 0x01))){
+				if (O2_alarm_min_value==20){
+					O2_alarm_min_value = O2_alarm_min_value;
+				}
+				else{
+					O2_alarm_min_value -= 1;
+					intiger_val_send(0x23,O2_alarm_min_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}else if (PS_flag == 1) {
+			if (((DISPLAY_INPUT[5] == 0xA2) && (DISPLAY_INPUT[8] == 0x01))) {
+				if (PS_value == 60) {
+					PS_value = PS_value;
+				} else {
+					Value_reset_flag = 0;
+					PS_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PS_value += 1;
+					intiger_val_send(0x09, PS_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			} else if ((DISPLAY_INPUT[5] == 0xA3)
+					&& (DISPLAY_INPUT[8] == 0x01)) {
+				if (PS_value == 5) {
+					PS_value = PS_value;
+				} else {
+					Value_reset_flag = 0;
+					PS_value_reset_flag = 1;
+					osTimerStart(Touch_value_resetHandle, 5000);
+					PS_value -= 1;
+					intiger_val_send(0x09, PS_value);
+					for (int a = 0; a < 9; a++)
+						DISPLAY_INPUT[a] = 0x00;
+				}
+			}
+		}
+
+		if(DISPLAY_INPUT[5] == 0xCD){
+			osDelay(30);
+			O2_flag = 1;
+		}
+		if(O2_flag == 1){
+			O2_Sensor(0x00);
+		}
+		else if (O2_flag == 0){
+			MCP3551_ReadData();
+			convert_ADC_to_Percentage(adcValue);
+			oxy_per();
+		}
+		if(DISPLAY_INPUT[5] == 0xCC){
+			osDelay(30);
+			O2_flag = 0;
+		}
+
+		//play pause icon change
+		if (((DISPLAY_INPUT[0] == 0x5A) && (DISPLAY_INPUT[1] == 0xA5)
+				&& (DISPLAY_INPUT[2] == 0x06) && (DISPLAY_INPUT[3] == 0x83)
+				&& (DISPLAY_INPUT[5] == 0x35))) {
+			if (DISPLAY_INPUT[8] == 0x6A){
+				play_icon_change(0x6A);
+			} else if(DISPLAY_INPUT[8] == 0x69){
+				play_icon_change(0x69);
+			}
+			else{
+				play_icon_change(0x6A);
+			}
+		}
+		//  mode selection
+		if (DISPLAY_INPUT[5] == 0XB3){
+			osDelay(30);
+			mode_select_number = 0X01;
+			modes_icon_change(0x3B);
+			play_icon_change(0x69);
+		}
+		else if (DISPLAY_INPUT[5] == 0XB4){
+			osDelay(30);
+			mode_select_number = 0X02;
+			modes_icon_change(0x3C);
+			play_icon_change(0x69);
+		}
+		else if (DISPLAY_INPUT[5] == 0XB5){
+			osDelay(30);
+			mode_select_number = 0X03;
+			modes_icon_change(0x3D);
+			play_icon_change(0x69);
+		}
+		else if (DISPLAY_INPUT[5] == 0XB6){
+			osDelay(30);
+			mode_select_number = 0X04;
+			modes_icon_change(0x3E);
+			play_icon_change(0x69);
+		}
+		else if (DISPLAY_INPUT[5] == 0XB7){
+			osDelay(30);
+			mode_select_number = 0X05;
+			modes_icon_change(0x3F);
+			play_icon_change(0x69);
+		}
+		else if (DISPLAY_INPUT[5] == 0XB8){
+			osDelay(30);
+			mode_select_number = 0X06;
+			modes_icon_change(0x40);
+			play_icon_change(0x69);
+		}
+		if(mode_select_number == 0x01){
+			modes_icon_change(0x3B);
+			//			play_icon_change(0x69);
+		}
+		else if(mode_select_number == 0x02){
+			modes_icon_change(0x3C);
+			//			play_icon_change(0x69);
+		}
+		else if(mode_select_number == 0x03){
+			modes_icon_change(0x3D);
+			//			play_icon_change(0x69);
+		}
+		else if(mode_select_number == 0x04){
+			modes_icon_change(0x3E);
+			//			play_icon_change(0x69);
+		}
+		else if(mode_select_number == 0x05){
+			modes_icon_change(0x3E);
+			//			play_icon_change(0x69);
+		}
+		else if(mode_select_number == 0x06){
+			modes_icon_change(0x40);
+			//			play_icon_change(0x69);
+		}
+
+
+		if ((DISPLAY_INPUT[0] == 0x5A) && (DISPLAY_INPUT[1] == 0xA5) &&
+				(DISPLAY_INPUT[2] == 0x06) && (DISPLAY_INPUT[3] == 0x83) &&
+				(DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0x9F) && (DISPLAY_INPUT[8] == 0x4D) ) {
+			Head = 1;
+		}
+		if ((DISPLAY_INPUT[0] == 0x5A) && (DISPLAY_INPUT[1] == 0xA5) &&
+				(DISPLAY_INPUT[2] == 0x06) && (DISPLAY_INPUT[3] == 0x83) &&
+				(DISPLAY_INPUT[4] == 0x10) && (DISPLAY_INPUT[5] == 0x9F) && (DISPLAY_INPUT[8] == 0x4C) ) {
+			Head = 0;
+		}
+		if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_RESET){
+			//			HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+			//			HAL_PWR_EnterSTOPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+			//			HAL_PWR_EnterSTANDBYMode();
+			vTaskSuspend(Buzzer_TaskHandle);
+			vTaskSuspend(Alarm_TaskHandle);
+			//			Enter_Sleep_Mode();
+			PCV_FLAG = 0;
+			VCV_FLAG = 0;
+			PSV_FLAG = 0;
+			STAND_BY = 1;
+			SIMV_FLAG = 0;
+			BAG_FLAG = 0;
+			stand_ppr_set_flag = 1;
+			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_11, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, GPIO_PIN_RESET);
+			//			buzz_flag = 0;
+		}
+		else if(HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_SET){
+			vTaskResume(Buzzer_TaskHandle);
+			vTaskResume(Alarm_TaskHandle);
+			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_11, GPIO_PIN_RESET);
+			HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET);
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, GPIO_PIN_SET);
+
+		}
+		if ((DISPLAY_INPUT[5] == 0xBC) || (DISPLAY_INPUT[5] == 0xBD) || (DISPLAY_INPUT[5] == 0xBE) || (DISPLAY_INPUT[5] == 0xBF) ||
+				(DISPLAY_INPUT[5] == 0xC0) || (DISPLAY_INPUT[5] == 0xC1) || (DISPLAY_INPUT[5] == 0xC8)){
+			osDelay(30);
+			uint8_t clear_graph[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x03, 0x05, 0x00, 0x00 };
+			uint8_t clear_graph2[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x03, 0x0B, 0x00, 0x00 };
+			HAL_UART_Transmit(&huart1, clear_graph, sizeof(clear_graph),
+					HAL_MAX_DELAY);
+			HAL_UART_Transmit(&huart1, clear_graph2, sizeof(clear_graph2),
+					HAL_MAX_DELAY);
+		}
+
+		cls_cmd(temp_add);
+
+
+		//		voldemort = HAL_Init();
+		//		if((HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_RESET)){
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR0, vt_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, PLR_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR2, RR_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR3, PU_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR4, TRG_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR5, PIP_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR6, PEEP_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR7, insP_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR8, exp_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR9, P_peak_alarm_max_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR10, P_peak_alarm_min_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR11, MV_alarm_max_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR12, MV_alarm_min_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR13, RR_alarm_max_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR14, RR_alarm_min_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR15, peep_alarm_max_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR16, peep_alarm_min_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR17, O2_alarm_max_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR18, O2_alarm_min_value);
+		//			HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR19, PS_value);
+		//			Bkp_flag = 1;
+		//		}
+		//
+		//		BKP0 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR0);
+		//		BKP1 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
+		//		BKP2 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR2);
+		//		BKP3 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR3);
+		//		BKP4 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR4);
+		//		BKP5 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR5);
+		//		BKP6 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR6);
+		//		BKP7 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR7);
+		//		BKP8 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR8);
+		//		BKP9 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR9);
+		//		BKP10 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR10);
+		//		BKP11 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR11);
+		//		BKP12 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR12);
+		//		BKP13 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR13);
+		//		BKP14 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR14);
+		//		BKP15 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR15);
+		//		BKP16 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR16);
+		//		BKP17 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR17);
+		//		BKP18 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR18);
+		//		BKP19 = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR19);
+		//
+		//
+		//		if((HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9) == GPIO_PIN_SET) && Bkp_flag == 1){
+		//			//		if(&&(Bkp_flag ==1)){
+		//			osDelay(5000);
+		//			intiger_val_vt_send(1, BKP0);
+		//			intiger_val_send(2, BKP1);
+		//			intiger_val_send(3, BKP2);
+		//			intiger_val_send(5, BKP3);
+		//			intiger_val_send(6, BKP4);
+		//			PIP_VAL(7, BKP5);
+		//			//	intiger_val_send(7, PIP_value);
+		//			intiger_val_send(8, BKP6);
+		//			//	intiger_val_send(0x43, Play_value);
+		//			intiger_val_send(0x24, BKP7);
+		//			intiger_val_send(0x25, BKP8);
+		//			intiger_val_send(0x14, BKP9);
+		//			intiger_val_send(0x15, BKP10);
+		//			intiger_val_send(0x16, BKP11);
+		//			intiger_val_send(0x17, BKP12);
+		//			intiger_val_send(0x18, BKP13);
+		//			intiger_val_send(0x19, BKP14);
+		//			intiger_val_send(0x1A, BKP15);
+		//			intiger_val_send(0x21, BKP16);
+		//			intiger_val_send(0x22, BKP17);
+		//			intiger_val_send(0x23, BKP18);
+		//			intiger_val_send(9, BKP19);
+		//			Bkp_flag = 0;
+		//			//			__HAL_RCC_CLEAR_RESET_FLAGS();
+		//		}
+
+
+
+		vTaskDelay(pdMS_TO_TICKS(5));
+	}
+	/* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_sensor_one */
+/**
+ * @brief Function implementing the sensor thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_sensor_one */
+void sensor_one(void const * argument)
+{
+	/* USER CODE BEGIN sensor_one */
+	/* Infinite loop */
+	for(;;)
+	{
+		////.......oxygen_sensor..............
+		//		MCP3551_ReadData();
+		//		convert_ADC_to_Percentage(adcValue);
+		//		oxy_per();
+		uint8_t sensor_data_counter = 0;
+		for(int a = 0; a < 24; a++){
+			if(sensor_data[a] == 0x11){
+				for(int b = a; b < (a+ 12); b++){
+					final_sensor_data[sensor_data_counter] = sensor_data[b];
+					sensor_data_counter++;
+				}
+			}
+		}
+		pressure_adc = (((final_sensor_data[3] << 8)) | final_sensor_data[4]);
+		//		pressure_adc = ((final_sensor_data[3] << 8));
+		pressure_data = ((pressure_adc - DigoutP_Min)/Sensp) - 1.496;
+		mbar = pressure_data * 70.307;
+		pressure = mbar;
+
+		sprintf(pressure_string, "%X", pressure);
+		sprintf("hex %s", pressure_string);
+		strtohex[0] = pressure_string[0];
+		strtohex[1] = pressure_string[1];
+		strtohex[2] = '\0';
+		result2 = (uint8_t) strtol(strtohex, NULL, 16);
+
+		if(Peep_control_flag == 1){
+			if(PEEP_temp_value == result2){
+				//				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut);
+				//				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_14, GPIO_PIN_SET);
+				HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
+
+			}
+		}
+
+		if(P_HI<=result2)
+		{
+			P_HI=result2;
+		}
+		else
+		{
+			P_HI=result2;
+		}
+
+		if(P_HI==255)
+		{
+			P_HI=0;
+		}
+
+		// flow Sensor code
+		flow_byts = (final_sensor_data[1] << 8) | final_sensor_data[2];
+		if (flow_byts < offset) {
+			data = (offset - flow_byts) / scal_fact; // Array to hold the resulting hexadecimal string
+			data = 100 - data;
+		} else {
+			data = (flow_byts - offset) / scal_fact;
+			data += 100;
+			raw_flow_val = data;
+		}
+		flow_adc = ((final_sensor_data[5] << 8) | final_sensor_data[6]);
+		flow_data = ((pressure_adc - DigoutP_Min)/Sensp) - 1.463;
+		float flow = flow_data * 68.9476;
+		update_mbar_history(flow);  // Smooth the value
+		p_flow = (int)mbar2_smooth;
+		//		float new_mbar2 = pressuor_data2 * 68.9476;
+
+		//		update_mbar_history(flow);  // Smooth the value
+
+		//		        pressure_graph2 = (int)mbar2_smooth;
+
+		if (VT_UPDATE_FLAG == 1){
+			xy =((((0.016)*p_flow * p_flow))+((0.30)*p_flow) + 99.6);
+			xy = 100 - (xy-100);
+
+			xyz = ((((0.016)*p_flow * p_flow))+((0.30)*p_flow) + 99.6);
+			xyz = 100 - (xyz-100);
+		}
+		else {
+			xy =((((0.016)*p_flow * p_flow))+((0.30)*p_flow) + 99.6);
+			xy = xy;
+
+			xyz =((((0.016)*p_flow * p_flow))+((0.30)*p_flow) + 99.6);
+			xyz = xyz;
+		}
+		ppr_flow_data = xyz;
+
+		sprintf(hex_string, "%X", xy);
+		sprintf("hex %s", hex_string);
+		hexStr[0] = hex_string[0];
+		hexStr[1] = hex_string[1];
+		hexStr[2] = '\0';
+		result = (uint8_t) strtol(hexStr, NULL, 16);
+
+		V1 = result2 * sensor_flow_for_vt;
+		Volume = (V1 / previous_pressure_first);
+
+		sprintf(PV_string, "%X", Volume);
+		sprintf("hex %s", PV_string);
+		PV[0] = PV_string[0];
+		PV[1] = PV_string[1];
+		PV[2] = '\0';
+		PV_Graph = (uint8_t) strtol(PV, NULL, 16);
+
+		v_y = Volume/ y_coor;
+		p_x = mbar / x_coor;
+		p_x1 = mbar / 0.35;
+		FV = sensor_flow_for_vt / xyz;
+
+		if(hI>=ppr_flow_data)
+		{
+			hI=hI;
+		}
+		else
+		{
+			hI=ppr_flow_data;
+		}
+		if(hI==255)
+		{
+			hI=0;
+		}
+		////LEAK TEST ICON////
+		if(CLT_FLAG == 1){
+			leak_icon_change(0x72);
+		}
+		else if(CLT_FLAG == 2){
+			if(previous_pressure_second <= 17500){
+				leak_icon_change(0x73);
+				osDelay(3000);
+				CLT_FLAG = 0;
+				leak_icon_change(0x00);
+			}
+			else if(previous_pressure_second > 17500){
+				leak_icon_change(0x74);
+				osDelay(3000);
+				CLT_FLAG = 0;
+				leak_icon_change(0x00);
+			}
+			else
+				leak_icon_change(0x00);
+		}
+		else
+			leak_icon_change(0x00);
+
+
+
+		if (VT_UPDATE_FLAG == 1){
+
+			mv_alarm();
+			//			hI_stor_data = PID_FLOW_VAR - 97;
+			hI_stor_data = PID_FLOW_VAR - 100;
+			z = hI_stor_data * (1000 / 60);
+			sensor_flow_for_vt = z * Ti;
+			//			sensor_flow_for_vt = (((float) hI_stor_data / 100)
+			//					* numatic_insp_ctr) * 2 ;
+			vt_alarm((uint16_t)sensor_flow_for_vt);
+			Compliance(sensor_flow_for_vt/previous_pressure_first);
+
+		}
+		if ((VCV_FLAG == 1) && (PID_CALIBRATE_FLAG == 1)) {
+			Temp = result;
+			PID_Compute(&TPID);
+			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut);
+		}
+		else if (PCV_FLAG == 1) {
+
+			Temp = previous_pressure_first;
+			PID_Compute(&TPID);
+			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut);
+
+		}
+		else if ((SIMV_FLAG == 1) && (PID_CALIBRATE_FLAG == 1)) {
+			Temp = result;
+			PID_Compute(&TPID);
+			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut);
+			if(Spontaneous_FLAG == 1){
+				Temp = previous_pressure_first;
+				PID_Compute(&TPID);
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut);
+			}
+
+		}
+		else if (PSV_FLAG == 1) {
+
+			Temp = previous_pressure_first;
+			PID_Compute(&TPID);
+			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut);
+
+		}
+		//		else if (CLT_FLAG == 1){
+		//			Temp = previous_pressure_first;
+		//			PID_Compute(&TPID);
+		//			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, PIDOut);
+		//		}
+
+		P_Peak_pressure(previous_pressure_first);
+		data_val2[19] = 0x64;
+		//		data_val2[25] = 0x64;
+		//        data_val2[25] = 0x64;
+		data_val2[21] = result;
+		//		data_val2[14] = 0x01;
+		data_val2[15] = result2;
+		//		data_val2[27] = result2;
+		//		uint8_t clear_graph3[8] = { 0x5A, 0xA5, 0x05, 0x82, 0x03, 0x07, 0x00, 0x00 };
+		//					HAL_UART_Transmit(&huart1, clear_graph3, sizeof(clear_graph3),
+		//							HAL_MAX_DELAY);
+		//        data_val2[27] = PV_Graph;
+		//        data_val2[21] = result;
+		//                data_val2[21] = 0x64;
+		//                data_val2[15] = 0x00;
+		for (int a = 0; a < 22; a++){
+			display_payload[a] = data_val2[a];
+		}
+		HAL_UART_Transmit(&huart1, display_payload, sizeof(display_payload),
+				HAL_MAX_DELAY);
+
+		//		for (int a = 0; a < 23; a++)
+		//			line2[a] = line[a];
+		//		HAL_UART_Transmit(&huart1, line2, sizeof(line2), HAL_MAX_DELAY);
+
+
+		//		HAL_ADC_PollForConversion(&hadc3, HAL_MAX_DELAY);
+		//		readValue = HAL_ADC_GetValue(&hadc3);
+		//		rawVoltage = (float) readValue * 3.3 * 2 / 4095;
+		//		//If rawVolatage is not 2.5 volt, multiply by a factor.
+		//		current = (rawVoltage - 2.5);
+
+		//		osDelay(1);
+		vTaskDelay(pdMS_TO_TICKS(10));
+	}
+	/* USER CODE END sensor_one */
+}
+
+/* USER CODE BEGIN Header_mode_ctr */
+/**
+ * @brief Function implementing the mode_control thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_mode_ctr */
+void mode_ctr(void const * argument)
+{
+	/* USER CODE BEGIN mode_ctr */
+	/* Infinite loop */
+	for(;;)
+	{
+		if (VCV_FLAG == 1) {
+			PID_VALUE_SET_FLAG = 1;
+			if(PID_VALUE_SET_FLAG == 1){
+				PID_FLOW_SET_VALUE(user_flowe, 0.5, 0.5, 0, 5);
+				PID_VALUE_SET_FLAG = 0;
+			}
+			VCV_MODE();
+		}
+		else if (PCV_FLAG == 1) {
+			PID_VALUE_SET_FLAG = 1;
+			PCV_MODE();
+		}
+		else if (SIMV_FLAG == 1){
+			//			Mandatory_FLAG = 1;
+			if (Mandatory_FLAG == 1){
+				PID_VALUE_SET_FLAG = 1;
+				if(PID_VALUE_SET_FLAG == 1){
+					PID_FLOW_SET_VALUE(user_flowe, 1.0, 0.5, 0, 5);
+					PID_VALUE_SET_FLAG = 0;
+				}
+			}
+			SIMV_MODE();
+			//			Mandatory_MODE();
+		}
+		else if (PSV_FLAG == 1) {
+			PID_VALUE_SET_FLAG = 1;
+			PSV_MODE();
+			//			PSV_FLAG = 2;
+		}
+		//		else if ((SIMV_FLAG == 1) && (PSV_FLAG == 1)){
+		//			PID_VALUE_SET_FLAG = 1;
+		//			PSV_MODE();
+		//		}
+		else if (CLT_FLAG == 1) {
+			mbar = 0;
+			previous_pressure_first = 0;
+			PIDOut = 0;
+			PID_VALUE_SET_FLAG = 1;
+			//			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 70);
+			//			PID_FLOW_SET_VALUE(user_flowe, 0, 0, 0, 0);
+			osDelay(200);
+			//			Cuff_Leak_Test();
+			CLT_MODE();
+			//			CL_test();
+			//			CLT_FLAG = 2;
+		}
+		//		else if ((PSV_FLAG == 1) && (SIMV_FLAG == 1)){
+		//			PID_VALUE_SET_FLAG = 1;
+		//			PSV_MODE();
+		//			PSV_FLAG = 0;
+		//		}
+		else if (BAG_FLAG == 1) {
+			PID_VALUE_SET_FLAG = 1;
+			BAG_MODE();
+		}
+
+
+		//		osDelay(1);
+		vTaskDelay(pdMS_TO_TICKS(50));
+	}
+	/* USER CODE END mode_ctr */
+}
+
+/* USER CODE BEGIN Header_Buzzer */
+/**
+ * @brief Function implementing the Buzzer_Task thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_Buzzer */
+void Buzzer(void const * argument)
+{
+	/* USER CODE BEGIN Buzzer */
+	muteUnmute_icon_change(0x4C);
+	modes_icon_change(0x3A);
+	play_icon_change(0x69);
+	/* Infinite loop */
+	for(;;)
+	{
+		HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);
+		//		__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
+		if (pressure_adc<16555){
+			update_flag = 1;
+			if (update_flag == 1 ){
+				//						alarm_icon_change(0x65);
+				//						HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_SET);
+				storevalue = pressure_adc;
+				storevalue1 = storevalue - pressure_adc;
+				update_flag = 0;
+			}
+		}
+		// Check alarm conditions (pressure, flow, RR, etc.)
+		if(((previous_pressure_first<P_peak_alarm_min_value)||(previous_pressure_first>P_peak_alarm_max_value))||
+				((MV_value_var < MV_alarm_min_value) || (MV_value_var > MV_alarm_max_value))||
+				((RR_temp_value < RR_alarm_min_value) || (RR_temp_value > RR_alarm_max_value))
+				||((Oxygen < O2_alarm_min_value) || (Oxygen > O2_alarm_max_value)) || (pressure_adc<16555))
+		{
+			//		if(((previous_pressure_first<P_peak_alarm_min_value)||(previous_pressure_first>P_peak_alarm_max_value))||
+			//				((MV_value_var < MV_alarm_min_value) || (MV_value_var > MV_alarm_max_value))||
+			//				((RR_temp_value < RR_alarm_min_value) || (RR_temp_value > RR_alarm_max_value))
+			//				||(pressure_adc<16555))
+			//		{
+			buzz_flag = 1;
+
+			// If alarm condition is met, notify the buzzer control task
+			xSemaphoreGive(BuzzHandle);  // Signal buzzer control task to activate buzzer
+		}
+		if (((previous_pressure_first>P_peak_alarm_min_value)||(previous_pressure_first<P_peak_alarm_max_value))||
+				((MV_value_var > MV_alarm_min_value) || (MV_value_var < MV_alarm_max_value))||
+				((RR_temp_value > RR_alarm_min_value) || (RR_temp_value < RR_alarm_max_value))
+				||((Oxygen > O2_alarm_min_value) || (Oxygen < O2_alarm_max_value)) || (storevalue1<0))
+		{
+			buzz_flag = 0;
+		}
+
+		vTaskDelay(pdMS_TO_TICKS(100));  // Delay before re-checking
+	}
+	/* USER CODE END Buzzer */
+}
+
+/* USER CODE BEGIN Header_Alarm */
+/**
+ * @brief Function implementing the Alarm_Task thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_Alarm */
+void Alarm(void const * argument)
+{
+	/* USER CODE BEGIN Alarm */
+	/* Infinite loop */
+	for(;;)
+	{
+		//		__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 119);
+		//		osDelay(500);
+		//		__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
+		//		osDelay(500);
+		if (xSemaphoreTake(BuzzHandle, portMAX_DELAY) == pdTRUE) {
+
+			// If alarm condition is met, turn on the buzzer
+			//			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);  // Buzzer ON
+			//			__HAL_TIM_SET_AUTORELOAD(&htim4, 240);
+			//			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 119);
+			//			osDelay(500);
+			//			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
+			//			osDelay(500);
+			BUZZ_PWM();
+
+			// Check for mute/unmute icon in the display input
+
+		}
+		if (Head == 1){
+			//			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);  // Buzzer OFF
+			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
+			//			osDelay(500);
+		}
+		if (Head == 0){
+			//			HAL_GPIO_WritePin(GPIOE, GPIO_PIN_1, GPIO_PIN_RESET);
+			//			__HAL_TIM_SET_AUTORELOAD(&htim4, 240);
+			//			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 119);
+			//			osDelay(500);
+			//			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 0);
+			//			osDelay(500);
+			//			BUZZ_PWM();
+		}
+	}
+	vTaskDelay(pdMS_TO_TICKS(50));
+	/* USER CODE END Alarm */
+}
+
+/* USER CODE BEGIN Header_Icon */
+/**
+ * @brief Function implementing the Notification thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_Icon */
+void Icon(void const * argument)
+{
+	/* USER CODE BEGIN Icon */
+	/* Infinite loop */
+	for(;;)
+	{
+		alarm_count = 0; // Reset alarm list
+
+		if (previous_pressure_first > P_peak_alarm_max_value)
+			alarm_icons[alarm_count++] = 0x5B;
+
+		if (previous_pressure_first < P_peak_alarm_min_value)
+			alarm_icons[alarm_count++] = 0x5C;
+
+		if (MV_value_var > MV_alarm_max_value)
+			alarm_icons[alarm_count++] = 0x5D;
+
+		if (MV_value_var < MV_alarm_min_value)
+			alarm_icons[alarm_count++] = 0x5E;
+
+		if (RR_temp_value > RR_alarm_max_value)
+			alarm_icons[alarm_count++] = 0x5F;
+
+		if (RR_temp_value < RR_alarm_min_value)
+			alarm_icons[alarm_count++] = 0x60;
+
+		if (Oxygen > O2_alarm_max_value)
+			alarm_icons[alarm_count++] = 0x61;
+
+		if (Oxygen < O2_alarm_min_value)
+			alarm_icons[alarm_count++] = 0x62;
+
+		if (pressure_adc < 16555)
+			alarm_icons[alarm_count++] = 0x65;
+
+		if (storevalue1 < 0)
+			alarm_icons[alarm_count++] = 0x00;
+
+		if (HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_13) == GPIO_PIN_RESET) {
+			PSW = 1;
+			alarm_icons[alarm_count++] = 0x67;
+		}
+		else if (HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_13) == GPIO_PIN_RESET) {
+			PSW = 0;
+			alarm_icons[alarm_count++] = 0x00;
+		}
+		if ((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11)== GPIO_PIN_RESET) && (Battery_average >= 3315 && Battery_average <= 3399)) {
+			alarm_icons[alarm_count++] = 0x5A;
+		}
+
+		static uint8_t current_alarm_index = 0;
+		static uint32_t last_switch_time = 0;
+		uint32_t now = HAL_GetTick();
+
+		if (alarm_count > 0) {
+			if (now - last_switch_time >= 1000) { // 1 second per icon
+				alarm_icon_change(alarm_icons[current_alarm_index]);
+				current_alarm_index = (current_alarm_index + 1) % alarm_count;
+				last_switch_time = now;
+			}
+		} else {
+			alarm_icon_change(0x00); // No alarms
+			current_alarm_index = 0;
+		}
+
+		//    osDelay(1);
+		vTaskDelay(pdMS_TO_TICKS(50));  // Delay before re-checking
+	}
+	/* USER CODE END Icon */
+}
+
+/* USER CODE BEGIN Header_Battery */
+/**
+ * @brief Function implementing the BT_ADC thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_Battery */
+void Battery(void const * argument)
+{
+	/* USER CODE BEGIN Battery */
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+	/* Infinite loop */
+	for(;;)
+	{
+		HAL_ADC_Start(&hadc1);
+		HAL_ADC_Start(&hadc3);
+		HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+		HAL_ADC_PollForConversion(&hadc3, HAL_MAX_DELAY);
+		Battery_Adc_Value = HAL_ADC_GetValue(&hadc1);
+		ACS_Adc_Value = HAL_ADC_GetValue(&hadc3);
+		total -= readings[readIndex];
+		readings[readIndex] = ACS_Adc_Value;
+		total += readings[readIndex];
+		readIndex = (readIndex + 1) % NUM_READINGS;
+		average = total / NUM_READINGS;
+
+		total1 -= readings1[readIndex1];
+		readings1[readIndex1] = Battery_Adc_Value;
+		total1 += readings1[readIndex1];
+		readIndex1 = (readIndex1 + 1) % NUM_READINGS1;
+		Battery_average = total1 / NUM_READINGS1;
+
+		if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET) && (average > 1570)){
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_SET);
+		}
+		if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_RESET) || (average < 1570)){
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
+		}
+
+		if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET) && (Battery_average > 3000 && Battery_average < 3315)){
+			battery_icon_change(0x54);
+		}
+		else if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET) && (Battery_average >= 3315 && Battery_average <= 3471)){
+			battery_icon_change(0x55);
+		}
+		else if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET) && (Battery_average >= 3471 && Battery_average <= 3627)){
+			battery_icon_change(0x56);
+		}
+		else if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET) && (Battery_average >= 3627 && Battery_average <= 3783)){
+			battery_icon_change(0x57);
+		}
+		else if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET) && (Battery_average >= 3783 && Battery_average <= 3939)){
+			battery_icon_change(0x58);
+		}
+		else if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET) && (Battery_average >= 3939 && Battery_average <= 4095)){
+			battery_icon_change(0x59);
+		}
+		else if((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_SET) && (Battery_average <=3000)){
+			battery_icon_change(0x4E);
+		}
+		//		else if (Battery_Adc_Value >= 3939 && Battery_Adc_Value <= 4095) {
+		//			battery_icon_change(0x53);
+		//		}
+		else if ((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_RESET) && (Battery_average >= 3783 && Battery_average <= 3939)) {
+
+			battery_icon_change(0x52);
+		}
+		else if ((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_RESET) && (Battery_average >= 3627 && Battery_average <= 3783)) {
+
+			battery_icon_change(0x51);
+		}
+		else if ((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11) == GPIO_PIN_RESET) && (Battery_average >= 3471 && Battery_average <= 3627)) {
+
+			battery_icon_change(0x50);
+		}
+		else if ((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11)== GPIO_PIN_RESET) && (Battery_average >= 3400 && Battery_average <= 3471)) {
+			battery_icon_change(0x4F);
+		}
+		else if ((HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_11)== GPIO_PIN_RESET) && (Battery_average <=3315)) {
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);
+		}
+
+		else {
+			battery_icon_change(0x00);
+		}
+
+
+		HAL_ADC_Stop(&hadc1);
+		HAL_ADC_Stop(&hadc3);
+		//		if(Backup_flag == 0){
+		//			AC_Plug(0x77);
+		//		}
+		//		else if(Backup_flag == 1){
+		//			AC_Plug(0x78);
+		//		}
+
+		vTaskDelay(pdMS_TO_TICKS(100));
+	}
+	/* USER CODE END Battery */
+}
+
+/* USER CODE BEGIN Header_Loop */
+/**
+ * @brief Function implementing the Loop_Graph thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_Loop */
+void Loop(void const * argument)
+{
+	/* USER CODE BEGIN Loop */
+	/* Infinite loop */
+	for(;;)
+	{
+		//		loop_flag = 1;
+		ab = 262 - v_y;
+		sprintf(v_xString, "%X", ab);
+		sprintf("hex %s", v_xString);
+		//		v_x1[0] = v_xString[0];
+		//		v_x1[1] = v_xString[1];
+		//		v_x1[2] = '\0';
+		v_x1[0] = '0';
+		v_x1[1] = '0';
+		v_x1[2] = '\0';
+
+		v_x3[0] = v_xString[0];
+		v_x3[1] = v_xString[1];
+		v_x3[2] = '\0';
+
+		a1 = (uint8_t) strtol(v_x1, NULL, 16);
+		a2 = (uint8_t) strtol(v_x3, NULL, 16);
+
+
+		cd = 673 + p_x;
+		sprintf(v_yString, "%X", cd);
+		sprintf("hex %s", v_yString);
+		v_y1[0] = '0';
+		v_y1[1] = v_yString[0];
+		v_y1[2] = '\0';
+
+		v_y3[0] = v_yString[1];
+		v_y3[1] = v_yString[2];
+		v_y3[2] = '\0';
+		y12 = (uint8_t) strtol(v_y1, NULL, 16);
+		y2 = (uint8_t) strtol(v_y3, NULL, 16);
+		//		bc = 98 + v_y;
+		//		sprintf(v_x2String, "%X", bc);
+		//		sprintf("hex %s", v_x2String);
+		//		v_x2[0] = '0';
+		//		v_x2[1] = '0';
+		//		v_x2[2] = '\0';
+		//
+		//		v_x4[0] = v_x2String[0];
+		//		v_x4[1] = v_x2String[1];
+		//		v_x4[2] = '\0';
+		//		a3 = (uint8_t) strtol(v_x2, NULL, 16);
+		//		a4 = (uint8_t) strtol(v_x4, NULL, 16);
+		//
+		//		de = 856 - p_x;
+		//		sprintf(v_y2String, "%X", de);
+		//		sprintf("hex %s", v_y2String);
+		//		v_y2[0] = '0';
+		//		v_y2[1] = v_y2String[0];
+		//		v_y2[2] = '\0';
+		//
+		//		v_y4[0] = v_y2String[1];
+		//		v_y4[1] = v_y2String[2];
+		//		v_y4[2] = '\0';
+		//		y3 = (uint8_t) strtol(v_y2, NULL, 16);
+		//		y4 = (uint8_t) strtol(v_y4, NULL, 16);
+
+
+
+
+		line[16] = y12;
+		line[17] = y2;
+		line[18] = a1;
+		line[19] = a2;
+		line_graph[16] = y12;
+		line_graph[17] = y2;
+		line_graph[18] = a1;
+		line_graph[19] = a2;
+		line_graph[20] = 0x02;
+		line_graph[21] = 0xA2;
+		line_graph[22] = 0x01;
+		line_graph[23] = 0x06;
+
+		line_gr8[16] = y12;
+		line_gr8[17] = y2;
+		line_gr8[18] = a1;
+		line_gr8[19] = a2;
+		line_gr8[20] = 0x02;
+		line_gr8[21] = 0xA2;
+		line_gr8[22] = 0x01;
+		line_gr8[23] = 0x07;
+		line_gr8[24] = y12;
+		line_gr8[25] = y2;
+		line_gr8[26] = a1;
+		line_gr8[27] = a2 + 1;
+		line_gr8[28] = 0x02;
+		line_gr8[29] = 0xA2;
+		line_gr8[30] = 0x01;
+		line_gr8[31] = 0x08;
+		line_gr8[32] = y12;
+		line_gr8[33] = y2;
+		line_gr8[34] = a1;
+		line_gr8[35] = a2 + 2;
+		line_gr8[36] = 0x02;
+		line_gr8[37] = 0xA2;
+		line_gr8[38] = 0x01;
+		line_gr8[39] = 0x09;
+		line_gr8[40] = y12;
+		line_gr8[41] = y2;
+		line_gr8[42] = a1;
+		line_gr8[43] = a2 + 3;
+
+
+		//		line[20] = y3;
+		//		line[21] = y4;
+		//		line[22] = a3;
+		//		line[23] = a4;
+		for (int a = 0; a < 46; a++){
+			//			line2[a] = line[a];
+			//			line_graph2[a] = line_graph[a];
+			line_graph2[a] = line_gr8[a];
+			loop_flag = 1;
+		}
+
+		HAL_UART_Transmit(&huart1, line_graph2, sizeof(line_graph2), HAL_MAX_DELAY);
+
+		if (VT_UPDATE_FLAG == 0){
+			m1 = y12;
+			m2 = y2;
+			n1 = a1;
+			n2 = a2;
+			o1 = p_x;
+			o2 = v_y;
+			//			HAL_UART_Transmit(&huart1, line2, sizeof(line2), HAL_MAX_DELAY);
+
+		}
+		if(VT_UPDATE_FLAG == 1){
+			n1n2 = (n1<<8) | n2;
+			m1m2 = (m1<<8) | m2;
+			bc = 262 - v_y;
+			sprintf(v_x2String, "%X", bc);
+			sprintf("hex %s", v_x2String);
+			v_x2[0] = '0';
+			v_x2[1] = '0';
+			v_x2[2] = '\0';
+
+			v_x4[0] = v_x2String[0];
+			v_x4[1] = v_x2String[1];
+			v_x4[2] = '\0';
+			a3 = (uint8_t) strtol(v_x2, NULL, 16);
+			a4 = (uint8_t) strtol(v_x4, NULL, 16);
+
+			de = 684 + p_x1;
+			sprintf(v_y2String, "%X", de);
+			sprintf("hex %s", v_y2String);
+			v_y2[0] = '0';
+			v_y2[1] = v_y2String[0];
+			v_y2[2] = '\0';
+
+			v_y4[0] = v_y2String[1];
+			v_y4[1] = v_y2String[2];
+			v_y4[2] = '\0';
+			y3 = (uint8_t) strtol(v_y2, NULL, 16);
+			y4 = (uint8_t) strtol(v_y4, NULL, 16);
+			//		osDelay(100);
+			//
+			//					line3[12] = m1;
+			//					line3[13] = m2;
+			//					line3[14] = n1;
+			//					line3[15] = n2;
+			//					line3[16] = y3;
+			//					line3[17] = y4;
+			//					line3[18] = a3;
+			//					line3[19] = a4;
+			//			line_graph3[16] = m1;
+			//			line_graph3[17] = m2;
+			//			line_graph3[18] = n1;
+			//			line_graph3[19] = n2;
+			//			line_graph3[20] = y3;
+			//			line_graph3[21] = y4;
+			//			line_graph3[22] = a3;
+			//			line_graph3[23] = a4;
+			line_gr81[16] = m1;
+			line_gr81[17] = m2;
+			line_gr81[18] = n1;
+			line_gr81[19] = n2;
+			line_gr81[20] = y3;
+			line_gr81[21] = y4;
+			line_gr81[22] = a3;
+			line_gr81[23] = a4+1;
+			line_gr81[24] = m1;
+			line_gr81[25] = m2;
+			line_gr81[26] = n1;
+			line_gr81[27] = n2 + 1;
+			line_gr81[28] = y3;
+			line_gr81[29] = y4;
+			line_gr81[30] = a3;
+			line_gr81[31] = a4+2;
+			line_gr81[32] = m1;
+			line_gr81[33] = m2;
+			line_gr81[34] = n1;
+			line_gr81[35] = n2+2;
+			line_gr81[36] = y3;
+			line_gr81[37] = y4;
+			line_gr81[38] = a3;
+			line_gr81[39] = a4+3;
+			line_gr81[40] = m1;
+			line_gr81[41] = m2;
+			line_gr81[42] = n1;
+			line_gr81[43] = n2+3;
+
+			for (int a = 0; a < 46; a++){
+				//						line4[a] = line3[a];
+				//				line_graph2[a] = line_graph3[a];
+				line_graph2[a] = line_gr81[a];
+			}
+			HAL_UART_Transmit(&huart1, line_graph2, sizeof(line_graph2), HAL_MAX_DELAY);
+		}
+
+		vTaskDelay(pdMS_TO_TICKS(100));
+	}
+	/* USER CODE END Loop */
+}
+
+/* USER CODE BEGIN Header_FVG */
+/**
+ * @brief Function implementing the FVGraph thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_FVG */
+void FVG(void const * argument)
+{
+	/* USER CODE BEGIN FVG */
+	/* Infinite loop */
+	for(;;)
+	{
+		vt_xc = 676 + vt_x;
+		sprintf(vt_xString, "%X", vt_xc);
+		sprintf("hex %s", vt_xString);
+		//		v_x1[0] = v_xString[0];
+		//		v_x1[1] = v_xString[1];
+		//		v_x1[2] = '\0';
+		vt_x1[0] = '0';
+		vt_x1[1] = vt_xString[0];
+		vt_x1[2] = '\0';
+
+		vt_x3[0] = vt_xString[1];
+		vt_x3[1] = vt_xString[2];
+		vt_x3[2] = '\0';
+
+		v1 = (uint8_t) strtol(vt_x1, NULL, 16);
+		v2 = (uint8_t) strtol(vt_x3, NULL, 16);
+
+		fl_yc = 422 - fl_y;
+		sprintf(f_yString, "%X", fl_yc);
+		sprintf("hex %s", f_yString);
+		//		v_x1[0] = v_xString[0];
+		//		v_x1[1] = v_xString[1];
+		//		v_x1[2] = '\0';
+		f_y1[0] = '0';
+		f_y1[1] = f_yString[0];
+		f_y1[2] = '\0';
+
+		f_y3[0] = f_yString[1];
+		f_y3[1] = f_yString[2];
+		f_y3[2] = '\0';
+
+		f1 = (uint8_t) strtol(f_y1, NULL, 16);
+		f2 = (uint8_t) strtol(f_y3, NULL, 16);
+
+		//		fv_graph[16] = v1;
+		//		fv_graph[17] = v2;
+		//		fv_graph[18] = f1;
+		//		fv_graph[19] = f2;
+		//		fv_graph[20] = v1;
+		//		fv_graph[21] = v2;
+		//		fv_graph[22] = f1;
+		//		fv_graph[23] = f2;
+		//		fv_graph[24] = 0x02;
+		//		fv_graph[25] = 0xF1;
+		//		fv_graph[26] = 0x01;
+		//		fv_graph[27] = 0xA6;
+		flowvt[16] = v1;
+		flowvt[17] = v2;
+		flowvt[18] = f1;
+		flowvt[19] = f2;
+		flowvt[20] = 0x02;
+		flowvt[21] = 0xA4;
+		flowvt[22] = 0x01;
+		flowvt[23] = 0xA6;
+		flowvt[24] = 0x02;
+		flowvt[25] = 0xA4;
+		flowvt[26] = 0x01;
+		flowvt[27] = 0xA6;
+		flowvt[28] = 0x02;
+		flowvt[29] = 0xA4;
+		flowvt[30] = 0x01;
+		flowvt[31] = 0xA6;
+		flowvt[32] = 0x02;
+		flowvt[33] = 0xA4;
+		flowvt[34] = 0x01;
+		flowvt[35] = 0xA6;
+		flowvt[36] = 0x02;
+		flowvt[37] = 0xA4;
+		flowvt[38] = 0x01;
+		flowvt[39] = 0xA6;
+
+
+		for (int a = 0; a < 42; a++){
+			//						line4[a] = line3[a];
+			//				line_graph2[a] = line_graph3[a];
+			fvg[a] = flowvt[a];
+		}
+		HAL_UART_Transmit(&huart1, fvg, sizeof(fvg), HAL_MAX_DELAY);
+
+		if (VT_UPDATE_FLAG == 0){
+			i1 = v1;
+			i2 = v2;
+			k1 = f1;
+			k2 = f2;
+		}
+		if (VT_UPDATE_FLAG == 1){
+			flowvt[16] = i1;
+			flowvt[17] = i2;
+			flowvt[18] = k1;
+			flowvt[19] = k2;
+			flowvt[20] = v1;
+			flowvt[21] = v2;
+			flowvt[22] = f1;
+			flowvt[23] = f2;
+			flowvt[24] = 0x02;
+			flowvt[25] = 0xA4;
+			flowvt[26] = 0x01;
+			flowvt[27] = 0xA6;
+			flowvt[28] = 0x02;
+			flowvt[29] = 0xA4;
+			flowvt[30] = 0x01;
+			flowvt[31] = 0xA6;
+			flowvt[32] = 0x02;
+			flowvt[33] = 0xA4;
+			flowvt[34] = 0x01;
+			flowvt[35] = 0xA6;
+			flowvt[36] = 0x02;
+			flowvt[37] = 0xA4;
+			flowvt[38] = 0x01;
+			flowvt[39] = 0xA6;
+
+
+			for (int a = 0; a < 42; a++){
+				//						line4[a] = line3[a];
+				//				line_graph2[a] = line_graph3[a];
+				fvg[a] = flowvt[a];
+			}
+			HAL_UART_Transmit(&huart1, fvg, sizeof(fvg), HAL_MAX_DELAY);
+		}
+		vTaskDelay(pdMS_TO_TICKS(100));
+	}
+	/* USER CODE END FVG */
+}
+
+/* USER CODE BEGIN Header_backup */
+/**
+ * @brief Function implementing the Backup thread.
+ * @param argument: Not used
+ * @retval None
+ */
+/* USER CODE END Header_backup */
+void backup(void const * argument)
+{
+	/* USER CODE BEGIN backup */
+	/* Infinite loop */
+	for(;;)
+	{
+
+		uint8_t arr[50] = {PLR_value, RR_value, insP_value, exp_value, PU_value, TRG_value, PIP_value, PEEP_value, P_peak_alarm_max_value, P_peak_alarm_min_value, MV_alarm_max_value, MV_alarm_min_value, RR_alarm_max_value, RR_alarm_min_value, peep_alarm_max_value, peep_alarm_min_value, O2_alarm_max_value, O2_alarm_min_value, PS_value, RR_temp_value, mode_select_number, m_icon_add};
+		uint16_t arr1[5] = {vt_value};
+
+		if((Display_Switch_Flag == 1) || (AC_Detection_Flag == 1)){
+			W25Q_Write_Page(0, 1, 50, arr);
+			W25Q_Read(0, 1, 50, RxData);
+			W25Q_Write_Page1(1, 1, 5, arr1);
+			W25Q_Read1(1, 1, 5, RxData1);
+		}
+
+		if((Backup_flag == 0) && (Backup_flag1 == 1)){
+			uint8_t PLR_Backup = RxData[0];
+			uint8_t RR_Backup = RxData[1];
+			uint8_t insP_Backup = RxData[2];
+			uint8_t exp_Backup = RxData[3];
+			uint8_t PU_Backup = RxData[4];
+			uint8_t TRG_Backup = RxData[5];
+			int8_t PIP_Backup = RxData[6];
+			uint8_t PEEP_Backup = RxData[7];
+			uint8_t P_peak_max_Backup = RxData[8];
+			uint8_t P_peak_min_Backup = RxData[9];
+			uint8_t MV_peak_max_Backup = RxData[10];
+			uint8_t MV_peak_min_Backup = RxData[11];
+			uint8_t RR_peak_max_Backup = RxData[12];
+			uint8_t RR_peak_min_Backup = RxData[13];
+			uint8_t Peep_peak_max_Backup = RxData[14];
+			uint8_t Peep_peak_min_Backup = RxData[15];
+			uint8_t O2_peak_max_Backup = RxData[16];
+			uint8_t O2_peak_min_Backup = RxData[17];
+			uint8_t PS_Backup = RxData[18];
+			uint8_t RR_alarm_backup = RxData[19];
+			uint8_t mode_select_backup = RxData[20];
+			uint8_t m_icon_add_backup = RxData[21];
+			uint16_t vt_value_backup = RxData1[0];
+			STAND_BY = 1;
+			VCV_FLAG = 0;
+			PCV_FLAG = 0;
+			SIMV_FLAG = 0;
+			PSV_FLAG = 0;
+			BAG_FLAG = 0;
+
+			osDelay(5000);
+			intiger_val_send_Backup(0x02, PLR_Backup);
+			intiger_val_send_Backup(0x03, RR_Backup);
+			intiger_val_send_Backup(0x05, PU_Backup);
+			intiger_val_send_Backup(0x06, TRG_Backup);
+			PIP_VAL(0x07, PIP_Backup);
+			intiger_val_send_Backup(0x08, PEEP_Backup);
+			intiger_val_send_Backup(0x09, PS_Backup);
+			intiger_val_send_Backup(0x14, P_peak_max_Backup);
+			intiger_val_send_Backup(0x15, P_peak_min_Backup);
+			intiger_val_send_Backup(0x16, MV_peak_max_Backup);
+			intiger_val_send_Backup(0x17, MV_peak_min_Backup);
+			intiger_val_send_Backup(0x18, RR_peak_max_Backup);
+			intiger_val_send_Backup(0x19, RR_peak_min_Backup);
+			intiger_val_send_Backup(0x1A, Peep_peak_max_Backup);
+			intiger_val_send_Backup(0x21, Peep_peak_min_Backup);
+			intiger_val_send_Backup(0x22, O2_peak_max_Backup);
+			intiger_val_send_Backup(0x23, O2_peak_min_Backup);
+			intiger_val_send_Backup(0x24, insP_Backup);
+			intiger_val_send_Backup(0x25, exp_Backup);
+			intiger_val_send_Backup(0x27, RR_alarm_backup);
+			intiger_val_vt_send_Backup(0x01, vt_value_backup);
+			mode_select_number = mode_select_backup;
+			m_icon_add = m_icon_add_backup;
+			osDelay(100);
+			Backup_flag1 = 0;
+		}
+		vTaskDelay(pdMS_TO_TICKS(100));
+	}
+	/* USER CODE END backup */
+}
+
+/* Clear_Button function */
+void Clear_Button(void const * argument)
+{
+	/* USER CODE BEGIN Clear_Button */
+	if (PID_CALIBRATE_FLAG == 1) {
+		previous_pressure_first = result2;
+	}
+	/* USER CODE END Clear_Button */
+}
+
+/* value_reset function */
+void value_reset(void const * argument)
+{
+	/* USER CODE BEGIN value_reset */
+	test++;
+	if ((Value_reset_flag == 0) && (vt_value_reset_flag == 1)) {
+		test2++;
+		vt_value = vt_temp_value;
+		intiger_val_vt_send(0x01, vt_value);
+		vt_value_reset_flag = 0;
+		osTimerStop(Touch_value_resetHandle);
+	} else if ((Value_reset_flag == 0) && (plt_value_reset_flag == 1)) {
+		PLR_value = PLR_temp_value;
+		intiger_val_send(0x02, PLR_value);
+		plt_value_reset_flag = 0;
+		osTimerStop(Touch_value_resetHandle);
+	} else if ((Value_reset_flag == 0) && (rr_value_reset_flag == 1)) {
+		RR_value = RR_temp_value;
+		intiger_val_send(0x03, RR_value);
+		rr_value_reset_flag = 0;
+		osTimerStop(Touch_value_resetHandle);
+	} else if ((Value_reset_flag == 0) && (pu_value_reset_flag == 1)) {
+		PU_value = PU_temp_value;
+		intiger_val_send(0x05, PU_value);
+		rr_value_reset_flag = 0;
+		osTimerStop(Touch_value_resetHandle);
+	} else if ((Value_reset_flag == 0) && (peep_value_reset_flag == 1)) {
+		PEEP_value = PEEP_temp_value;
+		intiger_val_send(0x08, PEEP_value);
+		peep_value_reset_flag = 0;
+		osTimerStop(Touch_value_resetHandle);
+	} else {
+		osTimerStop(Touch_value_resetHandle);
+	}
+	Value_reset_flag = 0;
+	/* USER CODE END value_reset */
+}
+
+/**
+ * @brief  Period elapsed callback in non blocking mode
+ * @note   This function is called  when TIM6 interrupt took place, inside
+ * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+ * a global variable "uwTick" used as application time base.
+ * @param  htim : TIM handle
+ * @retval None
+ */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	/* USER CODE BEGIN Callback 0 */
+
+	/* USER CODE END Callback 0 */
+	if (htim->Instance == TIM6)
+	{
+		HAL_IncTick();
+	}
+	/* USER CODE BEGIN Callback 1 */
+
+	/* USER CODE END Callback 1 */
+}
+
+/**
+ * @brief  This function is executed in case of error occurrence.
+ * @retval None
+ */
+void Error_Handler(void)
+{
+	/* USER CODE BEGIN Error_Handler_Debug */
+	/* User can add his own implementation to report the HAL error return state */
+	__disable_irq();
+	while (1)
+	{
+	}
+	/* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+ * @brief  Reports the name of the source file and the source line number
+ *         where the assert_param error has occurred.
+ * @param  file: pointer to the source file name
+ * @param  line: assert_param error line source number
+ * @retval None
+ */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+	/* USER CODE BEGIN 6 */
+	/* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+	/* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */

@@ -1,0 +1,10 @@
+18:08:21 **** Incremental Build of configuration Debug for project stm32_hal_i2c_eeprom ****
+make -j8 all 
+arm-none-eabi-size  stm32_hal_i2c_eeprom.elf 
+   text	   data	    bss	    dec	    hex	filename
+  11096	     20	   1652	  12768	   31e0	stm32_hal_i2c_eeprom.elf
+Finished building: default.size.stdout
+ 
+
+18:08:21 Build Finished. 0 errors, 0 warnings. (took 250ms)
+
